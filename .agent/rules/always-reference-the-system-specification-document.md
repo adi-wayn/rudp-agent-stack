@@ -42,5 +42,5 @@ trigger: always_on
   - constant definitions
 
 # Knowledge Source
-* The specification located at @docs/specs/System_Specification.pdf is the **primary and authoritative knowledge source**.
+* The specification located at @docs/specs/System_Specification.md is the **primary and authoritative knowledge source**.
 * In case of ambiguity, the agent must ask for clarification rather than assume behavior not grounded in the spec.
