@@ -54,6 +54,26 @@ python -m server.agent_server
 python -m client.agent_client
 ```
 
+
+### Day 1 Smoke Test (TCP PING/PONG)
+To verify the base TCP transport and 12-byte Application Envelope framing:
+
+1. **Start the TCP Server**:
+   ```bash
+   python -m server.transport.tcp_server
+   ```
+   *Output should show: `[TCP-Server] TCP Server listening on 127.0.0.1:8080`*
+
+2. **Run the TCP Client** (in a new terminal):
+   ```bash
+   python -m client.transport.tcp_client
+   ```
+
+**Expected Result**:
+- Client connects and sends `OP_PING` (0xFF).
+- Server logs the request and responds with `OP_PONG` (0xFE).
+- Client validates the response and logs: `Test PASSED: Received PONG.`
+
 ### Contribution Guidelines
 - Follow PEP8.
 - Ensure type hints are present.
