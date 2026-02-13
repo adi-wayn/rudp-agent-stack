@@ -35,21 +35,23 @@ class AgentServer:
         Core Pipeline:
         1. Decode Header
         2. Check Idempotency
-        3. Dispatch
+        3. Dispatch (which handles Response Building)
         4. Store Result
         """
         try:
             # 1. Transport -> Decoder
+            # Handle empty data gracefully
+            if not data:
+                return b''
+                
             header = decode_header(data[:12])
             payload = data[12:]
             
             # Sub-step: Validate Payload Length against Header
             if len(payload) != header.payload_len:
                 logger.warning(f"Payload length mismatch: Header={header.payload_len}, Actual={len(payload)}")
-                # We can either reject or trust decoder. 
-                # decode_header checks MAX_PAYLOAD_LEN but not actual buffer size match.
-                # Let's be strict.
-                raise ValueError("Payload length mismatch")
+                # Critical transport/framing error. Drop or return nothing as we can't trust header.
+                return b''
 
             # 2. Idempotency Check
             cached_response = self.idempotency_cache.get_response(
@@ -60,9 +62,7 @@ class AgentServer:
                 return cached_response
 
             # 3. Policy & Dispatch
-            # Note: PolicyGuard is used inside handlers/dispatcher, but we could enforce global policies here.
-            # (e.g. global rate limit, blocklist - not in Day 2 scope)
-
+            # Dispatcher now returns FULL ENCODED RESPONSE BYTES (Header + JSON Payload)
             response_bytes = self.dispatcher.dispatch(header, payload)
             
             # 4. Store Result
@@ -73,15 +73,9 @@ class AgentServer:
             return response_bytes
 
         except ValueError as e:
-            logger.error(f"Validation Error: {e}")
-            # Malformed request - Cannot rely on RequestID if header decode failed.
-            # If header failed, we can't reliably send an App Envelope response.
-            # We might drop or send a generic error if possible.
-            # Taking a safe approach: Return empty or specialized error if possible.
-            # But without a parsed RequestID, we can't associate the error.
-            # For this implementation, we re-raise or return None to imply "Drop".
-            # RUDP/TCP transport might handle "connection close" or "log error".
-            return b''  # Drop/Ignore malformed
+            logger.error(f"Header Decode Validation Error: {e}")
+            # If header decode fails, we can't get RequestID to send error back.
+            return b''
 
         except Exception as e:
             logger.error(f"Unexpected Server Error: {e}", exc_info=True)

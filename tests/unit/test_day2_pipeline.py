@@ -7,6 +7,7 @@ Covers:
 - Dispatcher
 - LIST Handler
 - AgentServer Pipeline
+- Unified Response Structure
 """
 import pytest
 import os
@@ -47,7 +48,7 @@ def agent_server(sandbox):
 
 def test_list_success(agent_server, sandbox):
     """
-    Test valid LIST request returns correct files.
+    Test valid LIST request returns correct files in unified JSON structure.
     """
     req_id = 101
     # Create LIST message (Empty Payload)
@@ -61,16 +62,28 @@ def test_list_success(agent_server, sandbox):
     assert header.request_id == req_id
     assert header.opcode == OP_LIST
     
-    # Verify Payload
+    # Verify JSON Payload Structure
     payload = resp_data[HEADER_SIZE:]
-    files = json.loads(payload.decode("utf-8"))
+    response_json = json.loads(payload.decode("utf-8"))
+    
+    # Assert Unified Schema: { status, error, data }
+    assert "status" in response_json
+    assert "data" in response_json
+    assert "error" in response_json
+
+    # Status should be OK
+    # Note: ErrorCode.OK maps to 200
+    assert response_json["status"] == ErrorCode.OK
+    assert response_json["error"] is None
+    
+    files = response_json["data"]
     assert "file1.txt" in files
     assert "file2.log" in files
     assert len(files) == 2
 
 def test_unknown_opcode(agent_server):
     """
-    Test unknown opcode returns Error 400.
+    Test unknown opcode returns Error 400 in unified JSON structure.
     """
     req_id = 102
     UNKNOWN_OP = 0x99
@@ -80,12 +93,15 @@ def test_unknown_opcode(agent_server):
     
     header = decode_header(resp_data[:HEADER_SIZE])
     assert header.request_id == req_id
-    # We decided to use 0xFF or similar for error, or check payload
+    # ResponseBuilder uses request opcode for correlation.
+    assert header.opcode == UNKNOWN_OP 
     
     payload = resp_data[HEADER_SIZE:]
-    error_resp = json.loads(payload.decode("utf-8"))
-    assert error_resp["status"] == ErrorCode.BAD_REQUEST
-    assert "Unknown Opcode" in error_resp["error"]
+    response_json = json.loads(payload.decode("utf-8"))
+    
+    assert response_json["status"] == ErrorCode.BAD_REQUEST
+    assert "Unknown Opcode" in response_json["error"]
+    assert response_json["data"] is None
 
 def test_idempotency(agent_server):
     """
@@ -97,13 +113,14 @@ def test_idempotency(agent_server):
     # First Call
     resp1 = agent_server.process_request("client1", req_data)
     
-    # Modify sandbox significantly to prove we aren't re-running LIST
-    # (Though LIST is idempotent, this checks cache hit)
-    # Actually, IdempotencyCache logic is: if key exists, return stored bytes.
-    # To prove it, let's artificially inject a cache entry.
+    # Manually Inject a distinguishable fake response to test cache hit
+    # Must preserve header structure
+    fake_payload = json.dumps({"status": 200, "data": "FAKE"}).encode("utf-8")
+    fake_resp = encode_message(OP_LIST, 0, req_id, fake_payload)
     
-    fake_resp = b'FAKE_RESPONSE'
-    agent_server.idempotency_cache.store_response("client1", req_id, OP_LIST, fake_resp)
+    agent_server.idempotency_cache.store_response(
+        "client1", req_id, OP_LIST, fake_resp
+    )
     
     # Second Call
     resp2 = agent_server.process_request("client1", req_data)
