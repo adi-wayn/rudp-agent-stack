@@ -54,7 +54,58 @@ python -m server.agent_server
 python -m client.agent_client
 ```
 
+
+### Day 1 Smoke Test (TCP PING/PONG)
+To verify the base TCP transport and 12-byte Application Envelope framing:
+
+1. **Start the TCP Server**:
+   ```bash
+   python -m server.transport.tcp_server
+   ```
+   *Output should show: `[TCP-Server] TCP Server listening on 127.0.0.1:8080`*
+
+2. **Run the TCP Client** (in a new terminal):
+   ```bash
+   python -m client.transport.tcp_client
+   ```
+
+**Expected Result**:
+- Client connects and sends `OP_PING` (0xFF).
+- Server logs the request and responds with `OP_PONG` (0xFE).
+- Client validates the response and logs: `Test PASSED: Received PONG.`
+
 ### Contribution Guidelines
 - Follow PEP8.
 - Ensure type hints are present.
 - Write tests for new features.
+
+### Day 2 Smoke Test
+This test validates the Core Agent Server pipeline, including the `LIST` opcode, Idempotency Cache, and Policy Guard validation.
+
+1. **Start the Agent Server** (using the Day 2 integration wrapper):
+   ```bash
+   python tests/integration/run_day2_server.py
+   ```
+   *Output should show: `[Day2Server] Day 2 Agent Server listening on 127.0.0.1:8080`*
+
+2. **Run the Manual LIST Test**:
+   ```bash
+   python tests/integration/manual_test_list.py
+   ```
+
+**Expected Output**:
+```text
+Connected to 127.0.0.1:8080
+Sent LIST request
+Received Header: Op=5 Len=...
+Files in sandbox: ['hello.txt']
+```
+
+**Validates**:
+- **12-byte header integrity**: Verified by correct decoding.
+- **TCP framing correctness**: Payload boundaries respected.
+- **Dispatcher routing**: Opcode 5 routed to `handle_list`.
+- **PolicyGuard enforcement**: Sandbox access logic active.
+- **Idempotency behavior**: Cache checks performed.
+
+> **Note**: This smoke test verifies the application-layer pipeline before Reliable UDP integration (Day 6).
