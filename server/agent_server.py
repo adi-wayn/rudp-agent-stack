@@ -12,6 +12,7 @@ from common.errors import ErrorCode
 from server.agent.validations import PolicyGuard
 from server.agent.idempotency import IdempotencyCache
 from server.agent.dispatcher import Dispatcher
+from server.agent.upload_session import UploadSessionManager, UploadMode
 
 logger = logging.getLogger(__name__)
 
@@ -26,7 +27,11 @@ class AgentServer:
         # 1. Initialize Components
         self.policy_guard = PolicyGuard(sandbox_root)
         self.idempotency_cache = IdempotencyCache()
-        self.dispatcher = Dispatcher(self.policy_guard)
+        
+        # Day 3: Upload Session Manager (Strict Mode by default)
+        self.session_manager = UploadSessionManager(upload_mode=UploadMode.STRICT)
+        
+        self.dispatcher = Dispatcher(self.policy_guard, self.session_manager)
         
         logger.info(f"AgentServer initialized with sandbox: {sandbox_root}")
 

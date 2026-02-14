@@ -6,12 +6,14 @@ Handles error mapping and response construction via ResponseBuilder.
 import logging
 from typing import Callable, Dict, Any
 
-from common.constants import OP_LIST
+from common.constants import OP_LIST, OP_PUT_META, OP_PUT_CHUNK
 from common.app_envelope import AppHeader
 from common.errors import ErrorCode
 
 from server.agent.validations import PolicyGuard
+from server.agent.upload_session import UploadSessionManager
 from server.agent.handlers.list import handle_list
+from server.agent.handlers.put import handle_put_meta, handle_put_chunk
 from server.agent.response_builder import ResponseBuilder
 
 logger = logging.getLogger(__name__)
@@ -20,12 +22,16 @@ class Dispatcher:
     """
     Orchestrates request routing and error handling.
     """
-    def __init__(self, policy_guard: PolicyGuard):
+    def __init__(self, policy_guard: PolicyGuard, session_manager: UploadSessionManager):
         self.policy_guard = policy_guard
+        self.session_manager = session_manager
+        
         # Map Opcode -> Handler Function
         # Handlers should return raw data (dict, list, etc.) or raise Exception
         self.handlers: Dict[int, Callable] = {
-            OP_LIST: self._wrapper_list
+            OP_LIST: self._wrapper_list,
+            OP_PUT_META: self._wrapper_put_meta,
+            OP_PUT_CHUNK: self._wrapper_put_chunk
         }
 
     def _wrapper_list(self, header: AppHeader, payload: bytes) -> Any:
@@ -34,6 +40,12 @@ class Dispatcher:
         """
         # LIST ignores payload
         return handle_list(header, self.policy_guard)
+
+    def _wrapper_put_meta(self, header: AppHeader, payload: bytes) -> Any:
+        return handle_put_meta(header, payload, self.policy_guard, self.session_manager)
+
+    def _wrapper_put_chunk(self, header: AppHeader, payload: bytes) -> Any:
+        return handle_put_chunk(header, payload, self.policy_guard, self.session_manager)
 
     def dispatch(self, header: AppHeader, payload: bytes) -> bytes:
         """
