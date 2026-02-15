@@ -13,6 +13,8 @@ from server.agent.validations import PolicyGuard
 from server.agent.idempotency import IdempotencyCache
 from server.agent.dispatcher import Dispatcher
 from server.agent.upload_session import UploadSessionManager, UploadMode
+from server.transport.tcp_server import TCPServerTransport
+from common.app_envelope import HEADER_SIZE
 
 logger = logging.getLogger(__name__)
 
@@ -21,8 +23,10 @@ class AgentServer:
     Agent Server Application Logic.
     Decoupled from Transport Layer (handled by Transport adapters).
     """
-    def __init__(self, sandbox_root: str):
+    def __init__(self, sandbox_root: str, transport=None):
         self.sandbox_root = sandbox_root
+        # Day 3 Refactor: Agent owns transport (Client pattern)
+        self.transport = transport or TCPServerTransport()
         
         # 1. Initialize Components
         self.policy_guard = PolicyGuard(sandbox_root)
@@ -85,3 +89,59 @@ class AgentServer:
         except Exception as e:
             logger.error(f"Unexpected Server Error: {e}", exc_info=True)
             return b''
+
+    def run(self):
+        """
+        Main Server Loop (Driver).
+        """
+        self.transport.start()
+        try:
+            while True:
+                conn, addr = self.transport.accept()
+                self._handle_connection(conn, addr)
+        except KeyboardInterrupt:
+            logger.info("AgentServer stopping...")
+        finally:
+            self.transport.close()
+
+    def _handle_connection(self, conn, addr):
+        """
+        Handle individual connection using transport primitives.
+        """
+        client_id = f"{addr[0]}:{addr[1]}"
+        logger.info(f"Accepted connection from {client_id}")
+        
+        try:
+            while True:
+                # 1. Read Header
+                try:
+                    header_bytes = self.transport.receive_exact(conn, HEADER_SIZE)
+                except ConnectionError:
+                    logger.info(f"Client {client_id} disconnected.")
+                    break
+                
+                # 2. Decode for length
+                try:
+                    header = decode_header(header_bytes)
+                except ValueError as e:
+                    logger.error(f"Header error from {client_id}: {e}")
+                    break
+                
+                # 3. Read Payload
+                try:
+                    payload = self.transport.receive_exact(conn, header.payload_len)
+                except ConnectionError:
+                    break
+                
+                # 4. Process
+                full_message = header_bytes + payload
+                response = self.process_request(client_id, full_message)
+                
+                # 5. Send
+                if response:
+                    self.transport.send_bytes(conn, response)
+                    
+        except Exception as e:
+            logger.error(f"Error handling {client_id}: {e}")
+        finally:
+            conn.close()
