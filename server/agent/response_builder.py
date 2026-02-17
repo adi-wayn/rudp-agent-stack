@@ -23,13 +23,17 @@ class ResponseBuilder:
         opcode: int,
         request_id: int,
         status_code: int,
-        data: Optional[Any] = None,
-        error_message: Optional[str] = None
+        binary_data: Optional[bytes] = None
     ) -> bytes:
         """
-        Constructs the final response bytes (Header + JSON Payload).
+        Constructs the final response bytes (Header + Payload).
         
         Payload Structure:
+        - If binary_data is None: [JSON Payload] (Backwards Compatible for errors/simple responses)
+          Note: GET/APPEND success MUST use Mixed Mode with binary_data.
+        - If binary_data is present: [MetaLen(4B)][JSON Meta][Binary] (Mixed Mode)
+        
+        JSON Payload/Meta Structure:
         {
             "status": <int>,       # Status Code (e.g. 200, 404)
             "error": <str|null>,   # Error message if failed
@@ -43,10 +47,20 @@ class ResponseBuilder:
         }
         
         try:
-            payload_bytes = json.dumps(payload_dict).encode("utf-8")
+            # Determine Payload Encoding
+            if binary_data is not None:
+                # 1. Mixed Mode
+                from common.mixed_mode_io import MixedModeEncoder
+                # Make sure to import internally to avoid circular deps if any, though common should be fine.
+                payload_bytes = MixedModeEncoder.encode(payload_dict, binary_data)
+            else:
+                # 2. Pure JSON (Standard)
+                payload_bytes = json.dumps(payload_dict).encode("utf-8")
+                
         except Exception as e:
             logger.error(f"Failed to serialize response payload: {e}")
             # Fallback to internal server error if serialization fails
+            # We strictly return JSON error here, no binary
             payload_bytes = json.dumps({
                 "status": ErrorCode.INTERNAL_SERVER_ERROR,
                 "error": "Response serialization failed",
