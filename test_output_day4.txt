@@ -1,0 +1,50 @@
+Running Day 4 tests... 
+test_append_file_mixed_payload (tests.integration.test_day4_client.TestDay4Client)
+Test APPEND constructs mixed JSON+Binary payload. ... [TCP-Client] 2026-02-17 16:25:35,572 - INFO - Connecting to ('127.0.0.1', 9999)...
+[TCP-Client] 2026-02-17 16:25:35,581 - INFO - Connected.
+[TCP-Client] 2026-02-17 16:25:35,582 - INFO - Socket closed.
+ok
+test_get_file_raw_bytes (tests.integration.test_day4_client.TestDay4Client)
+Test GET returns raw bytes (success). ... [TCP-Client] 2026-02-17 16:25:35,582 - INFO - Connecting to ('127.0.0.1', 9999)...
+[TCP-Client] 2026-02-17 16:25:35,583 - INFO - Connected.
+[TCP-Client] 2026-02-17 16:25:35,584 - INFO - Socket closed.
+ok
+test_idempotency_request_id_reuse (tests.integration.test_day4_client.TestDay4Client)
+Test client reuses Request ID on retry. ... [TCP-Client] 2026-02-17 16:25:35,584 - INFO - Connecting to ('127.0.0.1', 9999)...
+[TCP-Client] 2026-02-17 16:25:35,601 - INFO - Connected.
+[TCP-Client] 2026-02-17 16:25:35,602 - WARNING - Network Error (attempt 1): Socket error during read: Connection closed mid-read. Expected 12, got 0
+[TCP-Client] 2026-02-17 16:25:35,603 - INFO - Socket closed.
+[TCP-Client] 2026-02-17 16:25:36,113 - INFO - Connecting to ('127.0.0.1', 9999)...
+[TCP-Client] 2026-02-17 16:25:36,130 - INFO - Connected.
+[TCP-Client] 2026-02-17 16:25:36,131 - INFO - Socket closed.
+ok
+test_list_files (tests.integration.test_day4_client.TestDay4Client)
+Test LIST sends empty payload and parses JSON list. ... [TCP-Client] 2026-02-17 16:25:36,131 - INFO - Connecting to ('127.0.0.1', 9999)...
+[TCP-Client] 2026-02-17 16:25:36,132 - INFO - Connected.
+[TCP-Client] 2026-02-17 16:25:36,132 - INFO - Socket closed.
+ok
+test_tcp_framing_partial (tests.integration.test_day4_client.TestDay4Client)
+Test client handles split TCP packets (Partial Reads). ... [TCP-Client] 2026-02-17 16:25:36,133 - INFO - Connecting to ('127.0.0.1', 9999)...
+[TCP-Client] 2026-02-17 16:25:36,134 - INFO - Connected.
+[TCP-Client] 2026-02-17 16:25:36,240 - INFO - Socket closed.
+ok
+
+----------------------------------------------------------------------
+Ran 5 tests in 0.803s
+
+OK
+DEBUG: setUpClass starting
+DEBUG: Initializing MockServer on port 9999
+DEBUG: Bind successful
+DEBUG: MockServer thread started
+DEBUG: setUpClass finished
+DEBUG: Running test_append_file_mixed_payload
+DEBUG: Running test_get_file_raw_bytes
+DEBUG: Running test_idempotency_request_id_reuse
+DEBUG: Running test_list_files
+DEBUG: Running test_tcp_framing_partial
+DEBUG: tearDownClass starting
+DEBUG: MockServer thread stopped
+DEBUG: tearDownClass finished
+SUCCESS 
+Done. 
