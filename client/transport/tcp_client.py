@@ -1,28 +1,19 @@
 """
 TCP Client Transport.
 Implements a Day-1 TCP CLIENT skeleton for the PING/PONG echo test.
+Refactored for Day-2 to provide a reusable TCPClient class.
 """
 import socket
 import logging
 import sys
+import time
 from typing import Optional
 
 # Import envelope utilities
-try:
-    from common.app_envelope import decode_header, encode_message, HEADER_SIZE # type: ignore
-except ImportError:
-    # This might happen if running from inside client/transport without setting PYTHONPATH
-    # But we assume the environment is set up correctly as per instructions
-    raise
+from common.app_envelope import decode_header, encode_message, HEADER_SIZE
 
 # Import constants
-try:
-    from common.constants import AGENT_SERVER_PORT, LOOPBACK_IP, MAX_PAYLOAD_LEN # type: ignore
-except ImportError:
-    # Safe defaults if constants are missing/renamed (though instructions say they exist)
-    AGENT_SERVER_PORT = 8080
-    LOOPBACK_IP = "127.0.0.1"
-    MAX_PAYLOAD_LEN = 1024 * 1024
+from common.constants import AGENT_SERVER_PORT, LOOPBACK_IP, MAX_PAYLOAD_LEN
 
 # Configuration
 BASIC_LOG_FORMAT = "[TCP-Client] %(asctime)s - %(levelname)s - %(message)s"
@@ -33,105 +24,135 @@ logger = logging.getLogger("TCPClient")
 OP_PING = 0xFF
 OP_PONG = 0xFE
 
-def read_exact(sock: socket.socket, nbytes: int) -> bytes:
+class TCPClient:
     """
-    Read exactly nbytes from the socket.
-    Raises ConnectionError if the socket closes before reading all bytes.
+    Reusable TCP Client Wrapper.
     """
-    data = bytearray()
-    while len(data) < nbytes:
-        try:
-            chunk = sock.recv(nbytes - len(data))
-            if not chunk:
-                raise ConnectionError(f"Connection closed mid-read. Expected {nbytes}, got {len(data)}")
-            data.extend(chunk)
-        except socket.error as e:
-            raise ConnectionError(f"Socket error during read: {e}") from e
-    return bytes(data)
+    def __init__(self, server_ip: str = LOOPBACK_IP, server_port: int = AGENT_SERVER_PORT):
+        self.server_addr = (server_ip, server_port)
+        self.sock: Optional[socket.socket] = None
 
-def run_client():
-    """
-    Main client execution flow:
-    1. Connect
-    2. PING
-    3. PONG
-    """
-    server_addr = (LOOPBACK_IP, AGENT_SERVER_PORT)
-    sock: Optional[socket.socket] = None
-
-    try:
-        # 1) Connect
-        logger.info(f"Connecting to {server_addr}...")
+    def connect(self, timeout: float = 5.0):
+        """
+        Establish TCP connection.
+        """
+        logger.info(f"Connecting to {self.server_addr}...")
         try:
-            sock = socket.create_connection(server_addr, timeout=5.0)
+            self.sock = socket.create_connection(self.server_addr, timeout=timeout)
+            logger.info("Connected.")
         except socket.error as e:
             logger.error(f"Failed to connect: {e}")
-            raise
+            raise ConnectionError(f"Failed to connect to {self.server_addr}") from e
 
-        logger.info("Connected.")
+    def send_bytes(self, data: bytes):
+        """
+        Send raw bytes.
+        """
+        if not self.sock:
+            raise ConnectionError("Not connected")
+        try:
+            self.sock.sendall(data)
+        except socket.error as e:
+            raise ConnectionError(f"Socket error during send: {e}") from e
 
-        # 2) Build PING message
-        payload = b"PING Payload Data"
-        if len(payload) > MAX_PAYLOAD_LEN:
-             raise ValueError("Payload exceeds max limit")
-
-        logger.info(f"Sending PING: opcode={OP_PING:#x}, payload_len={len(payload)}")
+    def receive_exact(self, nbytes: int) -> bytes:
+        """
+        Read exactly nbytes from the socket.
+        Raises ConnectionError if the socket closes before reading all bytes.
+        """
+        if not self.sock:
+            raise ConnectionError("Not connected")
         
-        # Use existing project envelope utility
-        # Note: app_envelope.encode_message signature: (opcode, flags, request_id, payload)
-        full_message = encode_message(OP_PING, 0, 12345, payload)
+        data = bytearray()
+        while len(data) < nbytes:
+            try:
+                chunk = self.sock.recv(nbytes - len(data))
+                if not chunk:
+                    raise ConnectionError(f"Connection closed mid-read. Expected {nbytes}, got {len(data)}")
+                data.extend(chunk)
+            except socket.error as e:
+                raise ConnectionError(f"Socket error during read: {e}") from e
+        return bytes(data)
 
-        # 3) Send
-        sock.sendall(full_message)
+    def close(self):
+        """
+        Close the connection safely.
+        """
+        if self.sock:
+            try:
+                self.sock.close()
+                logger.info("Socket closed.")
+            except Exception as e:
+                logger.error(f"Error closing socket: {e}")
+            finally:
+                self.sock = None
 
-        # 4) Receive Framed Response
-        
+    def receive_response(self) -> tuple[int, int, int, bytes]:
+        """
+        Receive and decode a full application envelope.
+        Returns: (opcode, flags, request_id, payload_bytes)
+        helper method useful for simple interactions.
+        """
         # A. Read Header
-        header_data = read_exact(sock, HEADER_SIZE)
+        header_data = self.receive_exact(HEADER_SIZE)
         
         # B. Decode Header
         header = decode_header(header_data)
         
         # C. Read Payload
-        # Validate payload length for safety (optional but good robustness)
         if header.payload_len > MAX_PAYLOAD_LEN:
              raise ValueError(f"Response payload too large: {header.payload_len}")
 
-        payload_data = read_exact(sock, header.payload_len)
+        payload_data = self.receive_exact(header.payload_len)
+        
+        return header.opcode, header.flags, header.request_id, payload_data
+
+def run_client():
+    """
+    Main client execution flow (Day 1 PING/PONG Compatibility).
+    """
+    client = TCPClient()
+    
+    try:
+        # 1) Connect
+        client.connect()
+
+        # 2) Build PING message
+        payload = b"PING Payload Data"
+        logger.info(f"Sending PING: opcode={OP_PING:#x}, payload_len={len(payload)}")
+        
+        full_message = encode_message(OP_PING, 0, 12345, payload)
+
+        # 3) Send
+        client.send_bytes(full_message)
+
+        # 4) Receive Framed Response
+        opcode, _, request_id, payload_data = client.receive_response()
         
         # 5) Print Summary
-        logger.info(f"Received Response: opcode={header.opcode:#x}, payload_len={header.payload_len}")
+        logger.info(f"Received Response: opcode={opcode:#x}, payload_len={len(payload_data)}")
         
         summary = (
             f"\n--- Parsed Response ---\n"
-            f"Opcode:      {header.opcode:#x}\n"
-            f"Payload Len: {header.payload_len}\n"
-            f"Request ID:  {header.request_id}\n"
+            f"Opcode:      {opcode:#x}\n"
+            f"Payload Len: {len(payload_data)}\n"
+            f"Request ID:  {request_id}\n"
             f"Payload:     {payload_data.decode(errors='replace')}\n"
             f"-----------------------"
         )
         print(summary)
         
         # Logic Check
-        if header.opcode == OP_PONG:
+        if opcode == OP_PONG:
             logger.info("Test PASSED: Received PONG.")
         else:
-            logger.warning(f"Test UNCERTAIN: Expected PONG ({OP_PONG:#x}), got {header.opcode:#x}")
+            logger.warning(f"Test UNCERTAIN: Expected PONG ({OP_PONG:#x}), got {opcode:#x}")
 
     except Exception as e:
         logger.error(f"Client error: {e}")
-        # In a real app we might re-raise, but for a test script we just log
         sys.exit(1)
     finally:
-        if sock:
-            try:
-                sock.close()
-                logger.info("Socket closed.")
-            except Exception as e:
-                logger.error(f"Error closing socket: {e}")
+        client.close()
 
 if __name__ == "__main__":
-    # Smoke run instructions:
-    # Ensure PYTHONPATH includes the project root
-    # python -m client.transport.tcp_client
     run_client()
