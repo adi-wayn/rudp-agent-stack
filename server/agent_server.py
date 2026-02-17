@@ -35,7 +35,7 @@ class AgentServer:
         # Day 3: Upload Session Manager (Strict Mode by default)
         self.session_manager = UploadSessionManager(upload_mode=UploadMode.STRICT)
         
-        self.dispatcher = Dispatcher(self.policy_guard, self.session_manager)
+        self.dispatcher = Dispatcher(self.policy_guard, self.session_manager, self.idempotency_cache)
         
         logger.info(f"AgentServer initialized with sandbox: {sandbox_root}")
 
