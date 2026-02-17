@@ -7,7 +7,9 @@ import time
 import logging
 import socket
 from typing import Any, Dict, Optional, Tuple
-from common.constants import OP_APPEND
+
+from common.constants import OP_GET, OP_APPEND, OP_LIST
+from common.mixed_mode_io import MixedModeEncoder, MixedModeDecoder
 
 from client.transport.tcp_client import TCPClient
 from common.app_envelope import encode_message, decode_header, HEADER_SIZE
@@ -147,14 +149,12 @@ class AgentClient:
     def list_files(self, path: str = ".", recursive: bool = False) -> list:
         """
         Execute LIST (0x05).
-        Sends empty payload.
-        Returns: List of filenames.
+        Request Payload: JSON {}
+        Response Payload: JSON
+        Returns: List of filenames (or detailed list if server returns it).
         """
-        # Spec/User Note: Server ignores payload. Sending empty payload.
-        payload = b""
-        
-        # Import opcodes locally if not in scope, or rely on constants
-        from common.constants import OP_LIST
+        # Day 4: Send strict JSON payload "{}"
+        payload = b"{}"
         
         _, resp_bytes, _, _ = self._send_with_retry(OP_LIST, payload)
         
@@ -164,13 +164,17 @@ class AgentClient:
         except json.JSONDecodeError:
             raise ValueError(f"LIST response not JSON: {resp_bytes[:100]}")
             
-        # Handle various response formats (list or dict with data)
+        # Handle various response formats
         if isinstance(data, dict):
+             # Check for error status
              status = data.get("status")
              if status and status >= 300:
                   raise ValueError(f"LIST failed: {status} {data.get('error')}")
              
-             # Extract list from 'data' or 'files' if present, else return empty list or data itself
+             # Day 4: Server returns { "files": [...] }
+             if "files" in data:
+                 return data["files"]
+                 
              return data.get("data", [])
         elif isinstance(data, list):
             return data
@@ -180,44 +184,53 @@ class AgentClient:
     def get_file(self, remote_path: str) -> bytes:
         """
         Execute GET (0x03).
+        Request: JSON {"filename": ...}
+        Response: 
+            - 200 OK: Mixed Mode [Len][Meta][Binary]
+            - Error: JSON Only
         Returns: Raw file bytes on success.
-        Raises: ValueError if server returns error JSON.
+        Raises: ValueError on error response.
         """
         payload_dict = {"filename": remote_path}
         payload_bytes = json.dumps(payload_dict).encode("utf-8")
         
-        from common.constants import OP_GET
-        
         _, resp_bytes, _, _ = self._send_with_retry(OP_GET, payload_bytes)
         
-        # Validation: Check if it's an error response (JSON with status >= 300)
-        # Strategy: Peek if it looks like JSON. If so, check status.
-        # This is a heuristic because file content could be JSON.
-        # However, Agent Protocol usually wraps errors in specific JSON structure.
+        # Try Decoding as Mixed Mode first (Success Case)
         try:
-            # We only decode if it looks like it might be a small JSON error
-            if len(resp_bytes) < 512: 
-                decoded = resp_bytes.decode("utf-8")
-                data = json.loads(decoded)
-                if isinstance(data, dict) and "status" in data and data["status"] >= 300:
-                     raise ValueError(f"GET failed: {data['status']} {data.get('error')}")
-        except (UnicodeDecodeError, json.JSONDecodeError):
-            # Not JSON or not error JSON -> It's the file content
-            pass
+            meta, binary = MixedModeDecoder.decode(resp_bytes)
+            # Check status inside meta
+            status = meta.get("status", 200)
+            if status >= 300:
+                raise ValueError(f"GET failed (Mixed): {status} {meta.get('error')}")
+            return binary
             
-        return resp_bytes
+        except ValueError:
+            # Fallback: Try Pure JSON (Error Case)
+            try:
+                data = json.loads(resp_bytes.decode("utf-8"))
+                status = data.get("status")
+                if status and status >= 300:
+                    raise ValueError(f"GET failed: {status} {data.get('error')}")
+                # If valid JSON but no binary and no error? Empty file?
+                # or Day 4 specific: binary is mandatory for success in Mixed Mode response.
+                # If we are here, it wasn't mixed mode.
+                # If unexpected format:
+                raise ValueError(f"Unexpected GET response format: {resp_bytes[:100]}")
+            except json.JSONDecodeError:
+                pass
+            
+            # If neither, fail
+            raise ValueError(f"Invalid GET response format (neither Mixed nor JSON): {resp_bytes[:100]}")
 
     def append_file(self, remote_path: str, data: bytes) -> Dict[str, Any]:
         """
         Execute APPEND (0x04).
-        Payload: JSON Metadata (UTF-8) + Raw Data.
+        Request: Mixed Mode [Meta][Binary]
+        Response: JSON
         """
-        # Construct mixed payload: JSON + Binary (No delimiter)
-        meta_dict = {"filename": remote_path}
-        # Compact JSON to be strictly compliant
-        meta_json_bytes = json.dumps(meta_dict, separators=(',', ':')).encode('utf-8')
-        
-        payload = meta_json_bytes + data
+        # Construct mixed payload using Common Utility
+        payload = MixedModeEncoder.encode({"filename": remote_path}, data)
         
         _, resp_bytes, _, _ = self._send_with_retry(OP_APPEND, payload)
         
