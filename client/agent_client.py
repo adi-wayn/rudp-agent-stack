@@ -57,6 +57,8 @@ class AgentClient:
         self.transport = transport or TCPClient()
         self.request_id_manager = RequestIdManager()
         
+
+        
         # Initialize Dispatcher and Register Handlers
         self.dispatcher = ClientDispatcher()
         self.dispatcher.register(OP_GET, GetHandler())
@@ -194,24 +196,3 @@ class AgentClient:
         
     def close(self):
         self.transport.close()
-
-    # Legacy/Convenience Wrappers for backward compat in tests if strictly needed
-    # But updated tests should use execute() or these wrappers calling execute()
-    
-    def list_files(self) -> list:
-        res = self.execute(OP_LIST)
-        if res.status >= 300:
-            raise ValueError(f"LIST failed: {res.status} {res.error}")
-        return res.data if res.data else []
-
-    def get_file(self, path: str) -> bytes:
-        res = self.execute(OP_GET, filename=path)
-        if res.status >= 300:
-            raise ValueError(f"GET failed: {res.status} {res.error}")
-        return res.data
-
-    def append_file(self, path: str, data: bytes) -> Dict[str, Any]:
-        res = self.execute(OP_APPEND, filename=path, data=data)
-        if res.status >= 300:
-             raise ValueError(f"APPEND failed: {res.status} {res.error}")
-        return res.data if res.data else {}
