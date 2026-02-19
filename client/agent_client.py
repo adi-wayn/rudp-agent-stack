@@ -27,6 +27,10 @@ from client.agent.handlers.list import ListHandler
 from client.agent.handlers.put_meta import PutMetaHandler
 from client.agent.handlers.put_chunk import PutChunkHandler
 from client.agent.handlers.upload import UploadHandler
+from client.agent.handlers.task import TaskHandler
+from common.constants import (
+    OP_TASK_SEARCH_REPORT, OP_TASK_FILTER_LINES, OP_TASK_HASH_AND_STORE
+)
 
 logger = logging.getLogger("AgentClient")
 
@@ -61,6 +65,11 @@ class AgentClient:
         self.dispatcher.register(OP_PUT_META, PutMetaHandler())
         self.dispatcher.register(OP_PUT_CHUNK, PutChunkHandler())
         self.dispatcher.register(OP_UPLOAD, UploadHandler())
+        
+        # Day 5: Task Handlers (Orchestrators)
+        self.dispatcher.register(OP_TASK_SEARCH_REPORT, TaskHandler(OP_TASK_SEARCH_REPORT))
+        self.dispatcher.register(OP_TASK_FILTER_LINES, TaskHandler(OP_TASK_FILTER_LINES))
+        self.dispatcher.register(OP_TASK_HASH_AND_STORE, TaskHandler(OP_TASK_HASH_AND_STORE))
 
     def execute(self, opcode: int, **kwargs) -> OperationResult:
         """
@@ -83,14 +92,15 @@ class AgentClient:
         req_spec = handler.build_request(**kwargs)
         
         # 2. Send & Receive (Retry Loop)
-        status, resp_meta, resp_binary = self._send_with_retry(req_spec, request_id_override)
+        status, resp_meta, resp_binary = self.send_request_spec(req_spec, request_id_override)
         
         # 3. Parse Response via Handler
         return handler.parse_response(status, resp_meta, resp_binary)
 
-    def _send_with_retry(self, spec: ClientRequestSpec, request_id_override: Optional[int] = None) -> Tuple[int, Dict[str, Any], Optional[bytes]]:
+    def send_request_spec(self, spec: ClientRequestSpec, request_id_override: Optional[int] = None) -> Tuple[int, Dict[str, Any], Optional[bytes]]:
         """
-        Internal method to encode, send, receive, and decode.
+        Public method to encode, send, receive, and decode a request spec.
+        Used by Orchestrators that need to send raw requests.
         Returns: (status_code, meta_dict, binary_bytes)
         """
         # A. Encode Payload based on Spec Mode
