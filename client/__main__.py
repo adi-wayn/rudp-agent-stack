@@ -16,24 +16,21 @@ def main():
     Executes a simple LIST request flow.
     """
     logger.info("Starting Day-2 Client...")
-    
-    server_ip = LOOPBACK_IP  # Could be arg-parsed
-    server_port = AGENT_SERVER_PORT
 
     client = None
     try:
         # 1. Instantiate Agent Client
-        client = AgentClient(server_ip, server_port)
+        client = AgentClient()
         
         # 2. Send LIST Request (Opcode 0x05)
-        logger.info(f"Sending LIST request to {server_ip}:{server_port}")
-        response = client.send_request(OP_LIST, {})
+        logger.info(f"Sending LIST request to {LOOPBACK_IP}:{AGENT_SERVER_PORT}")
+        result = client.execute(OP_LIST)
         
         # 3. Print Response
         print("\n--- Server Response ---")
-        print(f"Status: {response.get('status')}")
-        print(f"Error:  {response.get('error')}")
-        print(f"Data:   {response.get('data')}")
+        print(f"Status: {result.status}")
+        print(f"Error:  {result.error}")
+        print(f"Data:   {result.data}")
         print("-----------------------\n")
         
     except Exception as e:

@@ -23,6 +23,8 @@ class ResponseBuilder:
         opcode: int,
         request_id: int,
         status_code: int,
+        data: Any = None,
+        error_message: Optional[str] = None,
         binary_data: Optional[bytes] = None
     ) -> bytes:
         """
@@ -50,12 +52,16 @@ class ResponseBuilder:
             # Determine Payload Encoding
             if binary_data is not None:
                 # 1. Mixed Mode
+                # Use absolute import to ensure resolution
                 from common.mixed_mode_io import MixedModeEncoder
-                # Make sure to import internally to avoid circular deps if any, though common should be fine.
+                # Helper: MixedMode expects dict + binary
                 payload_bytes = MixedModeEncoder.encode(payload_dict, binary_data)
             else:
                 # 2. Pure JSON (Standard)
-                payload_bytes = json.dumps(payload_dict).encode("utf-8")
+                # Ensure data is serializable?
+                # If data contains non-serializable objects (like set), to handle gracefully?
+                # We assume data is JSON-compliant dict/list/str/int
+                payload_bytes = json.dumps(payload_dict, default=str).encode("utf-8")
                 
         except Exception as e:
             logger.error(f"Failed to serialize response payload: {e}")
@@ -89,5 +95,6 @@ class ResponseBuilder:
             opcode=opcode,
             request_id=request_id,
             status_code=error_code,
-            error_message=message
+            error_message=message,
+            data=None
         )

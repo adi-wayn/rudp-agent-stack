@@ -14,10 +14,10 @@ from common.app_envelope import encode_message
 
 class TestAgentClientDay4(unittest.TestCase):
     def setUp(self):
-         self.client = AgentClient("127.0.0.1", 8080)
-         self.client.transport = MagicMock()
-         self.client.request_id_manager = MagicMock()
-         self.client.request_id_manager.next_id.return_value = 1
+        self.mock_transport = MagicMock()
+        self.client = AgentClient(transport=self.mock_transport)
+        self.client.request_id_manager = MagicMock()
+        self.client.request_id_manager.next_id.return_value = 1
 
     def test_list_files(self):
         # Setup Mock Response
