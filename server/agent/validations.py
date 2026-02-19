@@ -30,15 +30,22 @@ class PolicyGuard:
         if not filename:
             raise ValueError("Filename cannot be empty")
             
-        # secure_filename equivalent logic: prevent path traversal
-        clean_name = os.path.basename(filename)
-        if clean_name != filename:
-             # If basename differs, it implies directory components were present
-             # Strict policy: Flat directory only as per "Root-directory only"
-             logger.warning(f"Path traversal attempt or subdirectory blocked: {filename}")
-             raise ValueError("Subdirectories not allowed in sandbox")
+        # secure_filename logic:
+        # We allow subdirectories IF they are within sandbox.
+        # But we must prevent traversal (..)
+        # The commonpath check below handles the security.
+        # The basename check prevented ANY subdirectories, which breaks artifacts/.
+        
+        # Normalize path to handle .. and .
+        # But wait, os.path.join might resolve .. before commonpath check?
+        # Yes, os.path.abspath(os.path.join(root, filename)) resolves ..
+        # So commonpath check IS the security.
+        
+        # We can remove the strict basename check allow subdirs.
+        pass
 
-        full_path = os.path.join(self.sandbox_root, clean_name)
+
+        full_path = os.path.abspath(os.path.join(self.sandbox_root, filename))
         
         # Double check with commonpath to be absolutely sure
         if os.path.commonpath([self.sandbox_root, full_path]) != self.sandbox_root:
