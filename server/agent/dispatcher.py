@@ -6,7 +6,10 @@ Handles error mapping and response construction via ResponseBuilder.
 import logging
 from typing import Callable, Dict, Any
 
-from common.constants import OP_LIST, OP_PUT_META, OP_PUT_CHUNK, OP_GET, OP_APPEND
+from common.constants import (
+    OP_LIST, OP_PUT_META, OP_PUT_CHUNK, OP_GET, OP_APPEND,
+    OP_TASK_SEARCH_REPORT, OP_TASK_FILTER_LINES, OP_TASK_HASH_AND_STORE
+)
 from common.app_envelope import AppHeader
 from common.errors import ErrorCode
 
@@ -16,6 +19,8 @@ from server.agent.handlers.list import handle_list
 from server.agent.handlers.put import handle_put_meta, handle_put_chunk
 from server.agent.handlers.get import handle_get
 from server.agent.handlers.append import handle_append
+from server.agent.handlers.task import handle_task
+from server.agent.tool_dispatcher import ToolDispatcher
 from server.agent.idempotency import IdempotencyCache
 from server.agent.response_builder import ResponseBuilder
 
@@ -29,6 +34,9 @@ class Dispatcher:
         self.policy_guard = policy_guard
         self.session_manager = session_manager
         self.idempotency_cache = idempotency_cache
+        self.tool_dispatcher = ToolDispatcher(policy_guard)
+        
+        # Map Opcode -> Handler Function
         
         # Map Opcode -> Handler Function
         self.handlers: Dict[int, Callable] = {
@@ -36,7 +44,11 @@ class Dispatcher:
             OP_PUT_META: self._wrapper_put_meta,
             OP_PUT_CHUNK: self._wrapper_put_chunk,
             OP_GET: self._wrapper_get,
-            OP_APPEND: self._wrapper_append
+            OP_GET: self._wrapper_get,
+            OP_APPEND: self._wrapper_append,
+            OP_TASK_SEARCH_REPORT: self._wrapper_task,
+            OP_TASK_FILTER_LINES: self._wrapper_task,
+            OP_TASK_HASH_AND_STORE: self._wrapper_task
         }
 
     def _wrapper_list(self, header: AppHeader, payload: bytes) -> Any:
@@ -57,9 +69,16 @@ class Dispatcher:
         # Note: The global check only prevents *re-execution* if fully cached.
         return handle_append(header, payload, self.policy_guard, self.idempotency_cache)
 
-    def dispatch(self, header: AppHeader, payload: bytes) -> bytes:
+    def _wrapper_task(self, header: AppHeader, payload: bytes, client_address: tuple = None) -> Any:
+        # Route to logic/agent/handlers/task.py
+        # Pass tool_dispatcher instance
+        return handle_task(header, payload, self.policy_guard, self.tool_dispatcher, self.idempotency_cache, client_address)
+
+    def dispatch(self, header: AppHeader, payload: bytes, client_address: tuple = None) -> bytes:
         """
         Route request to handler and build response.
+        Args:
+            client_address: (ip, port) tuple from transport layer.
         Returns: Encoded App Envelope (Header + Payload)
         """
         handler = self.handlers.get(header.opcode)
@@ -75,7 +94,21 @@ class Dispatcher:
 
         try:
             # Execute Handler
-            result_data = handler(header, payload)
+            # Pass client_address to handler if it supports it
+            # For now, we only updated handle_task. Other handlers might need it later.
+            # We can inspect the handler signature or just pass it to all if we update all wrappers.
+            # To avoid breaking existing wrappers, we'll update wrappers to accept **kwargs use it?
+            # Or just update wrappers now.
+            
+            # Let's update `_wrapper_task` to pass it.
+            if handler == self._wrapper_task:
+                 result_data = handler(header, payload, client_address)
+            else:
+                 result_data = handler(header, payload)
+            
+            # If handler returns bytes, it has already built the response envelope
+            if isinstance(result_data, bytes):
+                return result_data
             
             # Extract Binary Content if present (Special Key from GET)
             binary_content = None
