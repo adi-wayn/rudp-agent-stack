@@ -67,10 +67,6 @@ def handle_get(header: AppHeader, payload: bytes, policy_guard: PolicyGuard) -> 
         if file_size > MAX_FILE_SIZE:
              logger.warning(f"File too large: {file_size} > {MAX_FILE_SIZE}")
              raise ValueError(f"File too large: {file_size} > {MAX_FILE_SIZE}")
-             
-        if file_size > MAX_INLINE_SIZE:
-             logger.warning(f"File too large for inline retrieval: {file_size} > {MAX_INLINE_SIZE}")
-             raise ValueError(f"File too large for inline retrieval: {file_size} > {MAX_INLINE_SIZE}")
 
         # 5. Read File
         with open(abs_path, 'rb') as f:

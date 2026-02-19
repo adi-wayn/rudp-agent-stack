@@ -71,8 +71,8 @@ def handle_task(
         return cached_result
 
     # Stat file if target exists to help Planner decision
-    if "target_file" in task_data:
-        path = task_data["target_file"]
+    if "input_file" in task_data:
+        path = task_data["input_file"]
         # Basic sandbox check before stat
         policy_guard.validate_path(path)
         if os.path.exists(path):

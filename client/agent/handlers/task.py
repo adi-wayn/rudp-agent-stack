@@ -71,7 +71,9 @@ class TaskHandler(ClientHandler):
         data = task_res.data if isinstance(task_res.data, dict) else {}
         
         # 4. Check for Artifact
-        artifact_file = data.get("artifact_file")
+        # Response is {status, error, data: {artifact_path: ...}}
+        inner_data = data.get("data", {}) if isinstance(data, dict) else {}
+        artifact_file = inner_data.get("artifact_path")
         
         if artifact_file:
             logger.info(f"Task produced artifact: {artifact_file}. Retrieving...")
