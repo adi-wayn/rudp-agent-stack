@@ -56,11 +56,13 @@ def decode_header(data: bytes) -> AppHeader:
 
     return AppHeader(version, opcode, flags, reserved, request_id, payload_len)
 
-def encode_message(opcode: int, flags: int, request_id: int, payload: bytes) -> bytes:
+def encode_message(opcode: int, flags: int, request_id: int, payload: bytes, request_id_override: Optional[int] = None) -> bytes:
     """
     Helper to encode a full message (Header + Payload).
+    Applies request_id_override if provided.
     """
-    header = encode_header(PROTOCOL_VERSION, opcode, flags, request_id, len(payload))
+    final_req_id = request_id_override if request_id_override is not None else request_id
+    header = encode_header(PROTOCOL_VERSION, opcode, flags, final_req_id, len(payload))
     return header + payload
 
 # Note: Message decoding usually involves reading the header first, then the payload.

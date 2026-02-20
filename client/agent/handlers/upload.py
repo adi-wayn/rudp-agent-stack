@@ -23,7 +23,7 @@ class UploadHandler(ClientHandler):
     def parse_response(self, status_code, meta, binary) -> OperationResult:
         raise NotImplementedError("UploadHandler does not parse single responses.")
 
-    def run(self, client, local_path: str, remote_name: str, **kwargs) -> OperationResult:
+    def run(self, client, local_path: str, remote_name: str) -> OperationResult:
         """
         Orchestrates the upload flow.
         1. Validates file (via UploadClient).
@@ -49,9 +49,7 @@ class UploadHandler(ClientHandler):
             OP_PUT_META, 
             filename=remote_name, 
             total_size=file_size, 
-            overwrite=True,
-            # Pass the caller's override to explicitly track the session initialization
-            request_id_override=kwargs.get('request_id_override')
+            overwrite=True
         )
         
         if meta_res.status != 200:

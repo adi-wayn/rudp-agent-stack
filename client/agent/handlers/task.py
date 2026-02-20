@@ -52,15 +52,12 @@ class TaskHandler(ClientHandler):
         3. If Artifact: Trigger GET.
         4. Return Result (Inline or Artifact Content).
         """
-        # Pop override before building kwargs dict so it's not strictly part of task JSON payload
-        req_id = kwargs.pop("request_id_override", None)
-        
         # 1. Build Request
         spec = self.build_request(**kwargs)
         
         # 2. Send via Public Helper
         try:
-            status, meta, binary = client.send_request_spec(spec, req_id)
+            status, meta, binary = client.send_request_spec(spec)
         except Exception as e:
             logger.error(f"Task Request Failed: {e}")
             return OperationResult(status=500, error=str(e))
