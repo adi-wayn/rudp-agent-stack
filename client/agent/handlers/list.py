@@ -21,10 +21,19 @@ class ListHandler(ClientHandler):
         )
 
     def parse_response(self, status_code: int, meta: Dict[str, Any], binary: Optional[bytes]) -> OperationResult:
+
         if status_code == 200:
-            # Protocol: {"files": [...]} or legacy {"data": [...]}
-            files = meta.get("files", meta.get("data", []))
+            # Server wraps everything inside "data"
+            payload = meta.get("data", {})
+
+            # Now extract files safely
+            if isinstance(payload, dict):
+                files = payload.get("files", [])
+            else:
+                files = []
+
             return OperationResult(status=200, data=files)
+
         else:
             error_msg = meta.get("error", "Unknown LIST Error")
-            return OperationResult(status=status_code, error=error_msg, data=meta)
+            return OperationResult(status=status_code, error=error_msg, data=meta)    

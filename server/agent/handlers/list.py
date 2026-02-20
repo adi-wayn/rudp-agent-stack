@@ -32,7 +32,27 @@ def handle_list(request_context, policy_guard: PolicyGuard) -> dict:
     
     # If PolicyGuard.list_sandbox just returns names, we need to join with root.
     # Does PolicyGuard expose root? YES, `self.sandbox_root`.
-    
+     ##בדיקת הדפסה 
+        # ===== DEBUG START =====
+    print("\n[DEBUG LIST]")
+    print("Sandbox root:", policy_guard.sandbox_root)
+
+    try:
+        real_disk = os.listdir(policy_guard.sandbox_root)
+        print("os.listdir():", real_disk)
+    except Exception as e:
+        print("os.listdir() ERROR:", e)
+
+    try:
+        pg_list = policy_guard.list_sandbox()
+        print("policy_guard.list_sandbox():", pg_list)
+    except Exception as e:
+        print("list_sandbox() ERROR:", e)
+
+    print("[DEBUG LIST END]\n")
+    # ===== DEBUG END =====
+
+
     filenames = policy_guard.list_sandbox()
     
     # 2. Collect Metadata
