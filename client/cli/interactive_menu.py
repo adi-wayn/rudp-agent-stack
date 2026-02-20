@@ -228,10 +228,22 @@ class InteractiveCLI:
                 return
             
             files = res.data if res.data else []
-            print("────────────────────────")
-            for f in files:
-                print(f" - {f}")
-            print("────────────────────────")
+            print("────────────────────────────────────────────")
+
+            if not files:
+                print("⚠️  No files found in sandbox.")
+            else:
+                print(f"{'#':<4} {'Name':<25} {'Size (bytes)':>12}")
+                print("────────────────────────────────────────────")
+                for idx, f in enumerate(files, 1):
+                    if isinstance(f, dict):
+                        name = f.get("name", "UNKNOWN")
+                        size = f.get("size", 0)
+                        print(f"{idx:<4} {name:<25} {size:>12}")
+                    else:
+                        print(f"{idx:<4} {str(f):<25}")
+            
+            print("────────────────────────────────────────────")
         except Exception as e:
             print(f"❌ LIST Failed: {e}")
 
