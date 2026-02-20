@@ -73,7 +73,7 @@ class AgentClient:
         self.dispatcher.register(OP_TASK_FILTER_LINES, TaskHandler(OP_TASK_FILTER_LINES))
         self.dispatcher.register(OP_TASK_HASH_AND_STORE, TaskHandler(OP_TASK_HASH_AND_STORE))
 
-    def execute(self, opcode: int, **kwargs) -> OperationResult:
+    def execute(self, opcode: int, request_id_override: Optional[int] = None, **kwargs) -> OperationResult:
         """
         Execute an operation by opcode.
         Delegates request building to handler, then orchestrates transport.
@@ -81,25 +81,41 @@ class AgentClient:
         1. Request/Response Handlers (build -> send -> parse)
         2. Orchestrator Handlers (run)
         """
+        # Backward compatibility for kwargs injection
+        if request_id_override is None:
+            request_id_override = kwargs.pop("request_id_override", None)
+        else:
+            kwargs.pop("request_id_override", None)
+            
         handler = self.dispatcher.get_handler(opcode)
         
-        # Support High-Level Orchestrators
-        if getattr(handler, "is_orchestrator", False):
-            return handler.run(self, **kwargs)
+        # Determine active override locally
+        inherited_override = getattr(self, "_active_request_override", None)
+        active_override = request_id_override if request_id_override is not None else inherited_override
+        
+        # Save previous state and apply current override
+        previous_override = getattr(self, "_active_request_override", None)
+        if active_override is not None:
+             self._active_request_override = active_override
 
-        # 1. Build Request Spec
-        # Check for request_id override (from kwargs)
-        request_id_override = kwargs.pop("request_id_override", None)
-        
-        req_spec = handler.build_request(**kwargs)
-        
-        # 2. Send & Receive (Retry Loop)
-        status, resp_meta, resp_binary = self.send_request_spec(req_spec, request_id_override)
-        
-        # 3. Parse Response via Handler
-        return handler.parse_response(status, resp_meta, resp_binary)
+        try:
+            # Support High-Level Orchestrators
+            if getattr(handler, "is_orchestrator", False):
+                return handler.run(self, **kwargs)
 
-    def send_request_spec(self, spec: ClientRequestSpec, request_id_override: Optional[int] = None) -> Tuple[int, Dict[str, Any], Optional[bytes]]:
+            # 1. Build Request Spec
+            req_spec = handler.build_request(**kwargs)
+            
+            # 2. Send & Receive (Retry Loop)
+            # send_request_spec will consume the _active_request_override
+            status, resp_meta, resp_binary = self.send_request_spec(req_spec)
+            
+            # 3. Parse Response via Handler
+            return handler.parse_response(status, resp_meta, resp_binary)
+        finally:
+            self._active_request_override = previous_override
+
+    def send_request_spec(self, spec: ClientRequestSpec) -> Tuple[int, Dict[str, Any], Optional[bytes]]:
         """
         Public method to encode, send, receive, and decode a request spec.
         Used by Orchestrators that need to send raw requests.
@@ -112,8 +128,14 @@ class AgentClient:
              # Default JSON
              payload_bytes = json.dumps(spec.meta).encode("utf-8")
         
-        # Use override if provided, else generate new
-        request_id = request_id_override if request_id_override is not None else self.request_id_manager.next_id()
+        # Check instance state for override, and consume it immediately 
+        # so it only applies explicitly to the NEXT logical envelope creation.
+        override = getattr(self, "_active_request_override", None)
+        self._active_request_override = None 
+        
+        generated_id = self.request_id_manager.next_id()
+        # The request_id field logic is done natively in app_envelope now
+        final_req_id = override if override is not None else generated_id
         
         retries = 0
 
@@ -121,7 +143,7 @@ class AgentClient:
             try:
 
                 # 2. Build Envelope
-                full_message = encode_message(spec.opcode, 0, request_id, payload_bytes)
+                full_message = encode_message(spec.opcode, 0, generated_id, payload_bytes, request_id_override=override)
                 
                 # 3. Send
                 self.transport.send_bytes(full_message)
@@ -134,7 +156,7 @@ class AgentClient:
                 if header.payload_len > MAX_PAYLOAD_LEN:
                     raise ValueError(f"Payload too large: {header.payload_len}")
                     
-                if header.request_id != request_id:
+                if header.request_id != final_req_id:
                      # Strict check
                      self.transport.close()
                      raise ConnectionError("Request ID Mismatch")
@@ -181,7 +203,7 @@ class AgentClient:
                 self.transport.close()
                 retries += 1
                 if retries > MAX_RETRIES:
-                    raise TimeoutError(f"Max retries exceeded for ReqID={request_id}") from e
+                    raise TimeoutError(f"Max retries exceeded for ReqID={final_req_id}") from e
                 
                 time.sleep(min(INITIAL_RTO * (2 ** (retries - 1)), MAX_RTO))
                 
