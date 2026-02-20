@@ -36,6 +36,11 @@ class SessionState:
     
     # State
     download_dir: str = DEFAULT_DOWNLOAD_DIR
+    
+    # Replay State
+    last_action_name: Optional[str] = None
+    last_opcode: Optional[int] = None
+    last_kwargs: Optional[dict] = None
     last_request_id: Optional[int] = None
     
 class InteractiveCLI:
@@ -218,11 +223,36 @@ class InteractiveCLI:
             return False
         return True
 
+    def _execute_and_remember(self, action_name: str, opcode: int, **kwargs):
+        """
+        Centralized core execution for the CLI.
+        Forces explicit generation of request_id_override to store it for replays.
+        """
+        req_id = kwargs.get("request_id_override")
+        if not req_id:
+            req_id = self.state.agent_client.request_id_manager.next_id()
+            kwargs["request_id_override"] = req_id
+            
+            # Store in SessionState for future replays
+            self.state.last_action_name = action_name
+            self.state.last_opcode = opcode
+            self.state.last_kwargs = kwargs.copy()
+            self.state.last_request_id = req_id
+
+        print(f"\n⏳ Executing '{action_name}' (ReqID: {req_id})...")
+        try:
+            return self.state.agent_client.execute(opcode, **kwargs)
+        except Exception as e:
+            print(f"❌ Execution Error: {e}")
+            return None
+
     def _action_list(self):
         if not self._check_conn(): return
         print("\n[LIST] Files on Server:")
         try:
-            res = self.state.agent_client.execute(OP_LIST)
+            res = self._execute_and_remember("LIST Files", OP_LIST)
+            if not res: return
+            
             if res.status >= 300:
                 print(f"❌ LIST Failed: {res.status} {res.error}")
                 return
@@ -241,7 +271,9 @@ class InteractiveCLI:
         if not path: return
         
         try:
-            res = self.state.agent_client.execute(OP_GET, filename=path)
+            res = self._execute_and_remember("GET File", OP_GET, filename=path)
+            if not res: return
+            
             if res.status >= 300:
                  print(f"❌ GET Failed: {res.status} {res.error}")
                  return
@@ -262,7 +294,9 @@ class InteractiveCLI:
         data = input("Data to Append: ").strip()
         
         try:
-            res = self.state.agent_client.execute(OP_APPEND, filename=path, data=data.encode())
+            res = self._execute_and_remember("APPEND to File", OP_APPEND, filename=path, data=data.encode())
+            if not res: return
+            
             if res.status >= 300:
                 print(f"❌ APPEND Failed: {res.status} {res.error}")
                 return
@@ -283,26 +317,10 @@ class InteractiveCLI:
              dest_path = os.path.basename(local_path)
              print(f"⚠️  Defaulting remote name to: {dest_path}")
         
-        # We need to implement UPLOAD using agent_client logic (which might need a public upload method?)
-        # AgentClient has UploadHandler but maybe no public convenience method?
-        # Let's check AgentClient.
-        # It has `execute(OP_UPLOAD, ...)`?
-        # Re-check AgentClient.
-        pass # To interact with user, better to implement a wrapper if invalid.
-        # Actually `AgentClient` has no `upload_file` method.
-        # We should use `execute(OP_UPLOAD, ...)`? 
-        # Wait, OP_UPLOAD is for single-shot or what?
-        # For Day 3, it was PUT_META + PUT_CHUNK.
-        # The prompt says implementation of UPLOAD file (PUT_META + PUT_CHUNK).
-        # We should probably add a helper in AgentClient for this multi-step, OR do it here using primitives.
-        # SoC says logic in client. Let's assume user calls `execute(OP_UPLOAD)` if handler does it, 
-        # OR we manually call put_meta then chunks.
-        # Let's check `client/agent/handlers/upload.py` if it exists.
-        
-        # Fallback: Just try OP_PUT_META for now as single step is risky.
-        # Better: Add `upload_file` to `AgentClient` in next step if missing.
         try:
-            res = self.state.agent_client.execute(OP_UPLOAD, local_path=local_path, remote_name=dest_path)
+            res = self._execute_and_remember("UPLOAD File", OP_UPLOAD, local_path=local_path, remote_name=dest_path)
+            if not res: return
+            
             if res.status >= 300:
                 print(f"❌ Upload Failed: {res.status} {res.error}")
             else:
@@ -316,6 +334,7 @@ class InteractiveCLI:
         query = input("Query Pattern: ").strip()
         
         self._exec_task(
+            "TASK: Search Report",
             OP_TASK_SEARCH_REPORT,
             input_file=fname,
             query=query
@@ -330,33 +349,45 @@ class InteractiveCLI:
         args = {"input_file": fname, "query": query}
         if outfile: args["out_file"] = outfile
         
-        self._exec_task(OP_TASK_FILTER_LINES, **args)
+        self._exec_task("TASK: Filter Lines", OP_TASK_FILTER_LINES, **args)
 
     def _action_task_hash(self):
          if not self._check_conn(): return
          fname = input("Input File: ").strip()
          outfile = input("Output File: ").strip()
          
-         self._exec_task(OP_TASK_HASH_AND_STORE, input_file=fname, out_file=outfile)
+         self._exec_task("TASK: Hash & Store", OP_TASK_HASH_AND_STORE, input_file=fname, out_file=outfile)
 
     def _action_replay(self):
         if not self._check_conn(): return
-        if not self.state.last_request_id:
+        s = self.state
+        if not s.last_request_id or s.last_opcode is None or s.last_kwargs is None:
             print("⚠️  No previous request to replay.")
             return
 
-        print(f"Replaying Request ID: {self.state.last_request_id}")
-        # We need the last opcode/args to replay.
-        # Session state should verify this.
-        # For simplicity, we only store ID. We can't strictly replay without data.
-        # The prompt says "Replay last request_id (Idempotency demo)".
-        # This implies we send the same ID with a NEW request? 
-        # OR we re-send the exact previous request?
-        # Usually Idempotency means: New intent + Old ID = Old Response.
-        # But we need to know *what* to send.
-        # Let's ask user to pick a task to replay with that ID? 
-        # Or just skip this feature complexity if not tracking args.
-        print("⚠️  Replay requires remembering parameters. Implementation limitation: Please manually run a task and force an ID if supported.")
+        print(f"\n[REPLAY] Replaying Last Request:")
+        print(f" Action: {s.last_action_name}")
+        print(f" Opcode: {s.last_opcode}")
+        print(f" Req ID: {s.last_request_id}")
+        
+        # We resend the EXACT previous request
+        kwargs = s.last_kwargs.copy()
+        
+        # For task execution responses, we might want to route them through _exec_task again
+        # to get artifact auto-download.
+        # If it's a task:
+        if "TASK:" in (s.last_action_name or ""):
+            # Drop the action_name from call since _exec_task expects it first
+            self._exec_task(s.last_action_name, s.last_opcode, **kwargs)
+        else:
+            # Direct operation
+            res = self._execute_and_remember(s.last_action_name, s.last_opcode, **kwargs)
+            if not res: return
+            
+            if res.status < 300:
+                print(f"✅ Replay Success: {res.data}")
+            else:
+                 print(f"❌ Replay Failed: {res.status} {res.error}")
 
     def _action_info(self):
         self._print_header()
@@ -364,24 +395,10 @@ class InteractiveCLI:
     # ==========================
     # Task Execution & Artifacts
     # ==========================
-    def _exec_task(self, opcode, **kwargs):
-        print("\n⏳ Executing Task...")
+    def _exec_task(self, action_name: str, opcode: int, **kwargs):
         try:
-            # We want to capture the request ID used.
-            # AgentClient generates it internally unless overridden.
-            # We don't easily get it back BEFORE send unless we generate it.
-            
-            # To fix: Generate ID here/use manager? 
-            # AgentClient doesn't expose manager.
-            # We rely on response containing ID.
-            
-            result = self.state.agent_client.execute(opcode, **kwargs)
-            
-            # Update state (assuming result has request_id in envelope, parsed into data?)
-            # The `OperationResult` struct (from dispatcher) has status, error, data.
-            # Data usually contains the payload dict.
-            # The payload dict doesn't always have request_id (it's in envelope).
-            # But the Client `execute` returns `OperationResult`.
+            result = self._execute_and_remember(action_name, opcode, **kwargs)
+            if not result: return
             
             if result.status < 300:
                 print("✅ Task Successful!")
