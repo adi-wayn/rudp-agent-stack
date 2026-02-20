@@ -16,7 +16,7 @@ from client.dhcp_client import DHCPClient
 from client.dns_client import DNSClient
 from common.constants import (
     OP_GET, OP_LIST, OP_APPEND, OP_PUT_META, OP_PUT_CHUNK, OP_UPLOAD,
-    OP_TASK_SEARCH_REPORT, OP_TASK_FILTER_LINES, OP_TASK_HASH_AND_STORE
+    OP_TASK_SEARCH_REPORT, OP_TASK_FILTER_LINES, OP_TASK_HASH_AND_STORE, INITIAL_RTO
 )
 
 # Constants
@@ -195,7 +195,7 @@ class InteractiveCLI:
             # Trigger handshake (Transport specific)
             # TCP connects on first send usually, but we can force connect?
             # TCPClient has connect().
-            self.state.agent_client.transport.connect()
+            self.state.agent_client.transport.connect(timeout=INITIAL_RTO)
             
             self.state.is_connected = True
             print("✅ Connected!")

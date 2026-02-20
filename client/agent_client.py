@@ -116,16 +116,9 @@ class AgentClient:
         request_id = request_id_override if request_id_override is not None else self.request_id_manager.next_id()
         
         retries = 0
-        current_timeout = INITIAL_RTO
 
         while retries <= MAX_RETRIES:
             try:
-                # 1. Connect
-                try:
-                    self.transport.connect(timeout=current_timeout)
-                except Exception as e:
-                    logger.warning(f"Connection failed: {e}")
-                    raise
 
                 # 2. Build Envelope
                 full_message = encode_message(spec.opcode, 0, request_id, payload_bytes)
