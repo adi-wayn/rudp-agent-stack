@@ -62,7 +62,7 @@ class InteractiveCLI:
         while self.running:
             self._print_header()
             self._print_menu()
-            choice = input("\nSelect an option (0-15): ").strip()
+            choice = input("\nSelect an option (0-13): ").strip()
             
             try:
                 self._handle_choice(choice)
@@ -107,7 +107,7 @@ class InteractiveCLI:
         print(" 11. TASK: Hash & Store")
         print(" 12. Replay Last Request (Idempotency)")
         print(" ─ Other ─")
-        print(" 13. Show Session Info")
+        print(" 13. Help / About")
         print(" 0. Exit")
 
     def _handle_choice(self, choice: str):
@@ -129,7 +129,7 @@ class InteractiveCLI:
             "10": self._action_task_filter,
             "11": self._action_task_hash,
             "12": self._action_replay,
-            "13": self._action_info
+            "13": self._action_help
         }
         
         action = map_action.get(choice)
@@ -342,9 +342,23 @@ class InteractiveCLI:
 
     def _action_task_search(self):
         if not self._check_conn(): return
+        
+        self._print_task_panel(
+            task_name="TASK: SEARCH_REPORT",
+            description="Searches a remote file for a regex query and returns matching lines.",
+            req_fields="input_file, query",
+            opt_fields="options (e.g. case_sensitive)",
+            example='{"task_type": "SEARCH_REPORT", "input_file": "data.txt", "query": "error", "out_file": null}'
+        )
+        
         fname = input("Input File: ").strip()
         query = input("Query Pattern: ").strip()
         
+        # Don't execute if they just hit enter
+        if not fname or not query:
+             print("⚠️  Missing required fields. Aborting.")
+             return
+             
         self._exec_task(
             "TASK: Search Report",
             OP_TASK_SEARCH_REPORT,
@@ -354,8 +368,22 @@ class InteractiveCLI:
 
     def _action_task_filter(self):
         if not self._check_conn(): return
+        
+        self._print_task_panel(
+            task_name="TASK: FILTER_LINES",
+            description="Streams a remote file, filters out matching lines, and writes cleanly to out_file.",
+            req_fields="input_file, query",
+            opt_fields="out_file (creates artifact if null), options",
+            example='{"task_type": "FILTER_LINES", "input_file": "raw.log", "query": "debug", "out_file": "clean.log"}'
+        )
+        
         fname = input("Input File: ").strip()
         query = input("Query Pattern: ").strip()
+        
+        if not fname or not query:
+             print("⚠️  Missing required fields. Aborting.")
+             return
+             
         outfile = input("Start Output File (optional): ").strip()
         
         args = {"input_file": fname, "query": query}
@@ -365,10 +393,27 @@ class InteractiveCLI:
 
     def _action_task_hash(self):
          if not self._check_conn(): return
+         
+         self._print_task_panel(
+            task_name="TASK: HASH_AND_STORE",
+            description="Generates an SHA-256 hash of the input file and stores it in out_file.",
+            req_fields="input_file",
+            opt_fields="out_file (creates artifact if null), options",
+            example='{"task_type": "HASH_AND_STORE", "input_file": "data.bin", "query": null, "out_file": "data.hash"}'
+         )
+         
          fname = input("Input File: ").strip()
+         
+         if not fname:
+              print("⚠️  Missing required input_file. Aborting.")
+              return
+              
          outfile = input("Output File: ").strip()
          
-         self._exec_task("TASK: Hash & Store", OP_TASK_HASH_AND_STORE, input_file=fname, out_file=outfile)
+         args = {"input_file": fname}
+         if outfile: args["out_file"] = outfile
+         
+         self._exec_task("TASK: Hash & Store", OP_TASK_HASH_AND_STORE, **args)
 
     def _action_replay(self):
         if not self._check_conn(): return
@@ -401,8 +446,30 @@ class InteractiveCLI:
             else:
                  print(f"❌ Replay Failed: {res.status} {res.error}")
 
-    def _action_info(self):
-        self._print_header()
+    def _action_help(self):
+        print("\n" + "═" * 50)
+        print(" \033[1;36mℹ️  HELP / ABOUT\033[0m")
+        print("═" * 50)
+        print(" • Auto-Download:")
+        print("   If a TASK returns an artifact (file > 64KB), the CLI")
+        print("   will automatically issue a GET request and preview it.")
+        print("\n • Idempotency Replay (Option 12):")
+        print("   Resends the EXACT previous request (same opcode, same")
+        print("   arguments, and same Request ID). The server should")
+        print("   return the cached response without repeating side-effects.")
+        print("═" * 50)
+
+    def _print_task_panel(self, task_name: str, description: str, req_fields: str, opt_fields: str, example: str):
+        """Displays a formatted panel for TASK actions before prompting for input."""
+        print("\n\033[1;35m" + "═" * 60 + "\033[0m")
+        print(f" \033[1;36m{task_name}\033[0m")
+        print(f" {description}")
+        print("\033[1;35m" + "─" * 60 + "\033[0m")
+        print(f" \033[1mRequired:\033[0m {req_fields}")
+        print(f" \033[1mOptional:\033[0m {opt_fields}")
+        print("\n \033[1mExample Payload:\033[0m")
+        print(f" \033[36m{example}\033[0m")
+        print("\033[1;35m" + "═" * 60 + "\033[0m\n")
 
     # ==========================
     # Task Execution & Artifacts
