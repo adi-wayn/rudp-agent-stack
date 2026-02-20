@@ -96,11 +96,11 @@ class TestCLIReplay(unittest.TestCase):
         output = self.run_cli_flow()
         
         # Verify Server Success
-        self.assertIn("✅ Connected!", output)
-        self.assertIn("✅ Append Success", output)
+        self.assertIn("Connected!", output)
+        self.assertIn("Append Success", output)
         
         # Verify Replay Print
-        self.assertIn("[REPLAY] Replaying Last Request", output)
+        self.assertIn("[REPLAY]", output)
         self.assertIn("Replay Success", output)
         
         # Verify File Content

@@ -2,7 +2,7 @@
 Client Entry Point.
 Launches the Interactive CLI.
 """
-from client.cli.interactive_menu import InteractiveCLI
+from client.cli.app import InteractiveCLI
 
 def main():
     cli = InteractiveCLI()
