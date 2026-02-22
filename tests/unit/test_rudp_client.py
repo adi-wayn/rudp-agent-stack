@@ -1,119 +1,113 @@
 import unittest
-from unittest.mock import patch, MagicMock
 import socket
-import logging
+import time
+import threading
+from unittest.mock import Mock, patch
 
 from client.transport.rudp_client import RUDPClientTransport
-from common.rudp_packet import RUDPPacket, ChecksumError, FLAG_SYN
+from common.rudp_packet import RUDPPacket, FLAG_ACK
 
 class TestRUDPClientTransport(unittest.TestCase):
-    
     def setUp(self):
-        self.host = '127.0.0.1'
-        self.port = 12345
-        
-        self.patcher = patch('client.transport.rudp_client.socket.socket')
+        # Patch socket to avoid actual network binding during tests
+        self.patcher = patch('socket.socket')
         self.mock_socket_class = self.patcher.start()
+        self.mock_socket = self.mock_socket_class.return_value
         
-        self.mock_socket = MagicMock()
-        self.mock_socket_class.return_value = self.mock_socket
-        
-        self.client = RUDPClientTransport(self.host, self.port)
+        self.transport = RUDPClientTransport("127.0.0.1", 8080)
 
     def tearDown(self):
+        self.transport.close()
         self.patcher.stop()
 
-    def test_initialization_and_connect(self):
-        """Test 1: Socket initialized and connect() called correctly"""
-        # Ensure the socket was created with UDP params
-        self.mock_socket_class.assert_called_with(socket.AF_INET, socket.SOCK_DGRAM)
-        # Ensure the OS-level connect() trick is applied
-        self.mock_socket.connect.assert_called_once_with((self.host, self.port))
+    def test_app_send_queues_via_sender(self):
+        """Verify client.send() queues data directly to RUDPSender."""
+        # Mock the underlying send mechanism so we can inspect it
+        self.transport.send_raw_packet = Mock()
+        
+        self.transport.send(b"test_data", 123)
+        
+        # The sender should have internally chunked and appended to send_buffer.
+        # But wait! _try_send gets called and triggers `self.sender.send_callback`.
+        # Because we didn't mock send_raw_packet BEFORE transport.__init__, sender holds 
+        # the original method reference which internally calls self.socket.send (our mocked socket).
+        self.mock_socket.send.assert_called()
+        self.assertEqual(len(self.transport.sender.unacked_packets), 1)
+        self.assertEqual(self.transport.sender.next_seq, 1)
 
-    def test_send_raw_packet(self):
-        """Test 2: send_raw_packet serializes and sends bytes"""
-        packet = RUDPPacket(seq_num=100, ack_num=0, flags=FLAG_SYN, rwnd=64)
-        expected_bytes = packet.pack()
+    def test_demultiplexing_ack_packet(self):
+        """Verify ACK-only packets are routed to the Sender."""
+        self.transport.sender.on_ack_received = Mock()
+        self.transport.receiver.process_segment = Mock()
         
-        self.client.send_raw_packet(packet)
-        self.mock_socket.send.assert_called_once_with(expected_bytes)
+        # Build an ACK packet
+        ack_packet = RUDPPacket(seq_num=0, ack_num=5, flags=FLAG_ACK, rwnd=64)
+        
+        # Directly invoke the router
+        self.transport.on_packet_received(ack_packet, time.time())
+        
+        # Assert routing
+        self.transport.sender.on_ack_received.assert_called_once()
+        self.transport.receiver.process_segment.assert_not_called()
 
-    @patch.object(RUDPClientTransport, 'on_packet_received')
-    def test_receive_loop_valid_packet(self, mock_on_packet_received):
-        """Test 3: Receive loop correctly processes valid bytes and calls on_packet_received"""
-        # Create a valid packet
-        packet = RUDPPacket(seq_num=200, ack_num=100, flags=0, rwnd=64)
-        valid_bytes = packet.pack()
+    def test_demultiplexing_data_packet(self):
+        """Verify DATA packets are routed to the Receiver and return ACKs."""
+        self.transport.sender.on_ack_received = Mock()
         
-        # Setup socket.recv to return valid_bytes
-        def mock_recv(bufsize):
-            self.client._running = False
-            return valid_bytes
+        # Mock receiver to return known values
+        self.transport.receiver.process_segment = Mock(return_value=(0, 64, FLAG_ACK))
+        self.transport.send_raw_packet = Mock()
+        
+        # Build a DATA packet
+        data_packet = RUDPPacket(seq_num=0, ack_num=0, flags=0, rwnd=0, payload=b"hello", msg_id=1, offset=0)
+        
+        # Directly invoke the router
+        self.transport.on_packet_received(data_packet, time.time())
+        
+        # Assert routing
+        self.transport.sender.on_ack_received.assert_not_called()
+        self.transport.receiver.process_segment.assert_called_once_with(data_packet)
+        self.transport.send_raw_packet.assert_called_once()  # Asserts the ACK was fired
 
-        self.mock_socket.recv.side_effect = mock_recv
-        self.client._running = True
-        
-        self.client._receive_loop()
-        
-        # Verify the packet was routed to the stub successfully
-        mock_on_packet_received.assert_called_once()
-        received_packet = mock_on_packet_received.call_args[0][0]
-        self.assertEqual(received_packet.seq_num, 200)
-
-    @patch('client.transport.rudp_client.logger')
-    @patch.object(RUDPClientTransport, 'on_packet_received')
-    def test_receive_loop_checksum_error(self, mock_on_packet_received, mock_logger):
-        """Test 4: Receive loop gracefully handles ChecksumError (packet dropped, no crash)"""
-        # Create a valid packet
-        packet = RUDPPacket(seq_num=300, ack_num=0, flags=0, rwnd=64)
-        valid_bytes = bytearray(packet.pack())
-        
-        # Corrupt the bytes slightly to trigger ChecksumError
-        valid_bytes[-1] ^= 0xFF
-        corrupted_bytes = bytes(valid_bytes)
-        
-        # Setup socket.recv to return corrupted_bytes on first call, then valid_bytes, then break
-        valid_packet2 = RUDPPacket(seq_num=301, ack_num=0, flags=0, rwnd=64)
-        valid_bytes2 = valid_packet2.pack()
-        
-        recv_returns = [corrupted_bytes, valid_bytes2]
-        
-        def mock_recv(bufsize):
-            if not recv_returns:
-                self.client._running = False
-                return b""
-            return recv_returns.pop(0)
+    def test_app_message_handler_bridging(self):
+        """Verify the receiver delivers reassembled bytes back to the app layer."""
+        delivered_data = []
+        def app_callback(data: bytes):
+            delivered_data.append(data)
             
-        self.mock_socket.recv.side_effect = mock_recv
-        self.client._running = True
+        self.transport.set_message_handler(app_callback)
         
-        self.client._receive_loop()
+        # Mock an in-order chunk arriving
+        self.transport.receiver.expected_seq = 1
+        data_packet = RUDPPacket(seq_num=1, ack_num=0, flags=0, rwnd=0, payload=b"world", msg_id=1, offset=0)
         
-        # Ensure we dropped the corrupted packet but processed the valid one after
-        mock_on_packet_received.assert_called_once()
-        received_packet = mock_on_packet_received.call_args[0][0]
-        self.assertEqual(received_packet.seq_num, 301)
+        self.transport.on_packet_received(data_packet, time.time())
         
-        # Ensure the warning was logged
-        mock_logger.warning.assert_called_with(unittest.mock.ANY)
+        self.assertEqual(len(delivered_data), 1)
+        self.assertEqual(delivered_data[0], b"world")
 
-    def test_lifecycle_management(self):
-        """Test 5: start() spins up daemon, close() terminates safely"""
-        self.assertFalse(self.client._running)
+    @patch('time.time')
+    def test_receive_loop_acts_as_tick_generator(self, mock_time):
+        """Verify time ticks the sender RTO loop upon every receive exception."""
+        mock_time.return_value = 1000.0
         
-        self.client.start()
-        self.assertTrue(self.client._running)
-        self.assertIsNotNone(self.client._receive_thread)
-        self.assertTrue(self.client._receive_thread.daemon)
+        # Mock sender RTO check
+        self.transport.sender.check_timeouts = Mock()
         
-        # Mock thread to verify join
-        with patch.object(self.client._receive_thread, 'join') as mock_join:
-            with patch.object(self.client._receive_thread, 'is_alive', return_value=True):
-                self.client.close()
-                self.assertFalse(self.client._running)
-                self.mock_socket.shutdown.assert_called_once_with(socket.SHUT_RDWR)
-                self.mock_socket.close.assert_called_once()
-                mock_join.assert_called_once_with(timeout=1.0)
+        # Mock socket to raise timeout to simulate blocking break
+        self.mock_socket.recv.side_effect = socket.timeout
+        
+        # Start and briefly run the loop
+        self.transport._running = True
+        self.transport._receive_thread = threading.Thread(target=self.transport._receive_loop)
+        self.transport._receive_thread.start()
+        
+        time.sleep(0.1) # Yield a tiny bit to allow thread iterations
+        self.transport.close()
+        
+        # Assert the RTO timer was continuously ticked by the background unblocking exception
+        self.assertTrue(self.transport.sender.check_timeouts.call_count > 0)
 
-if __name__ == '__main__':
+
+if __name__ == "__main__":
     unittest.main()
