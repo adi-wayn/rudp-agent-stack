@@ -27,9 +27,12 @@ class TCPServerTransport:
     Reusable TCP Server Transport.
     Provides generic socket primitives for the AgentServer.
     """
+    is_async = False  # Strict boolean flag for AgentServer polymorphic branching
+    
     def __init__(self, port: int = AGENT_SERVER_PORT, bind_ip: str = LOOPBACK_IP):
         self.server_addr = (bind_ip, port)
         self.sock: Optional[socket.socket] = None
+        self.active_conns: dict[tuple, socket.socket] = {}
 
     def start(self):
         """Bind and listen."""
@@ -47,7 +50,9 @@ class TCPServerTransport:
         """Accept a new connection."""
         if not self.sock:
             raise ConnectionError("Server not started")
-        return self.sock.accept()
+        conn, addr = self.sock.accept()
+        self.active_conns[addr] = conn
+        return conn, addr
 
     def receive_exact(self, conn: socket.socket, nbytes: int) -> bytes:
         """Read exactly nbytes from a specific connection."""
@@ -60,8 +65,23 @@ class TCPServerTransport:
         return bytes(buf)
 
     def send_bytes(self, conn: socket.socket, data: bytes):
-        """Send raw bytes to a specific connection."""
+        """Send raw bytes to a specific connection. (Legacy compatibility)"""
         conn.sendall(data)
+        
+    def send(self, data: bytes, request_id: int = 0, client_addr: tuple = None) -> None:
+        """
+        Polymorphic send() matching the RUDPServerTransport signature.
+        Locates the specific TCP socket bound to client_addr and pushes the response.
+        """
+        if not client_addr or client_addr not in self.active_conns:
+            logger.error(f"Cannot map TCP response: Unknown client_addr {client_addr}")
+            return
+            
+        conn = self.active_conns[client_addr]
+        try:
+            self.send_bytes(conn, data)
+        except Exception as e:
+            logger.error(f"Failed to send TCP response to {client_addr}: {e}")
 
     def close(self):
         """Stop the server."""

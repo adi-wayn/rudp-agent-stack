@@ -94,11 +94,27 @@ class AgentServer:
         """
         Main Server Loop (Driver).
         """
+        if hasattr(self.transport, 'set_message_handler'):
+            self.transport.set_message_handler(self._on_udp_message)
+
         self.transport.start()
+        # Since RUDPServerTransport might not have is_async defined yet, let's gracefully fallback
+        # by checking if it has 'accept' method. If it doesn't, it's the async UDP transport.
+        is_async = getattr(self.transport, 'is_async', not hasattr(self.transport, 'accept')) is True
+        
         try:
-            while True:
-                conn, addr = self.transport.accept()
-                self._handle_connection(conn, addr)
+            if is_async:
+                # RUDP Mode: Keep the main thread alive. 
+                # (RUDPServerTransport.start() blocks its own internal receive_loop,
+                # but if it was wrapped in a daemon thread later, this guarantees the server stays alive)
+                import time
+                while True:
+                    time.sleep(1)
+            else:
+                # TCP Mode: Synchronous Accept Loop
+                while True:
+                    conn, addr = self.transport.accept()
+                    self._handle_connection(conn, addr)
         except KeyboardInterrupt:
             logger.info("AgentServer stopping...")
         finally:
@@ -137,11 +153,34 @@ class AgentServer:
                 full_message = header_bytes + payload
                 response = self.process_request(client_id, full_message)
                 
-                # 5. Send
+                # 5. Send (Polymorphic)
                 if response:
-                    self.transport.send_bytes(conn, response)
+                    self.transport.send(response, header.request_id, addr)
                     
         except Exception as e:
             logger.error(f"Error handling {client_id}: {e}")
         finally:
             conn.close()
+            # Clean up the lookup dict
+            if hasattr(self.transport, 'active_conns'):
+                self.transport.active_conns.pop(addr, None)
+
+    def _on_udp_message(self, data: bytes, client_addr: Tuple[str, int]) -> None:
+        """
+        Callback triggered by RUDPServerTransport when a complete, valid AppEnvelope is reassembled.
+        Bypasses conventional streaming accept() mechanics in favor of atomic message processing.
+        """
+        if len(data) < HEADER_SIZE:
+            return
+            
+        client_id = f"{client_addr[0]}:{client_addr[1]}"
+        try:
+            header = decode_header(data[:HEADER_SIZE])
+            response = self.process_request(client_id, data)
+            
+            if response:
+                # Polymorphic push back down to transport using original client_addr tuple
+                self.transport.send(response, header.request_id, client_addr)
+                
+        except Exception as e:
+            logger.error(f"Error processing UDP message from {client_id}: {e}")

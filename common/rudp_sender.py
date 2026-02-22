@@ -48,16 +48,22 @@ class RUDPSender:
             msg_id: Request ID/Message ID to attach to the data packets.
             current_time: The current timestamp in seconds.
         """
+        from common.rudp_packet import FLAG_FIN
+        import math
+
         # Ensure we create at least one packet even if data is empty 
         # (e.g., for GET requests without payload but with msg_id).
         chunks = [data[i:i + MSS] for i in range(0, max(len(data), 1), MSS)]
         offset = 0
         
-        for chunk in chunks:
+        for i, chunk in enumerate(chunks):
+            # The last chunk marks the end of the message payload
+            packet_flags = FLAG_FIN if i == len(chunks) - 1 else 0
+            
             packet = RUDPPacket(
                 seq_num=self.next_seq,
                 ack_num=0,
-                flags=0,  # Pure DATA packet
+                flags=packet_flags,
                 rwnd=0,
                 msg_id=msg_id,
                 offset=offset,

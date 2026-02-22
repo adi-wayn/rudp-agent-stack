@@ -251,7 +251,11 @@ class AgentClient:
 
             except (ConnectionError, TimeoutError, socket.timeout, ValueError) as e:
                 logger.warning(f"Retryable Error ({retries}/{MAX_RETRIES}): {e}")
-                self.transport.close()
+                
+                # Only close synchronous transports on error to avoid destroying background threads
+                if not getattr(self.transport, 'is_async', False):
+                    self.transport.close()
+                    
                 retries += 1
                 if retries > MAX_RETRIES:
                     raise TimeoutError(f"Max retries exceeded for ReqID={final_req_id}") from e
