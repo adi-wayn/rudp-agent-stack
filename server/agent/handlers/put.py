@@ -10,6 +10,7 @@ from common.constants import MAX_FILE_SIZE
 from common.errors import ErrorCode
 from server.agent.validations import PolicyGuard
 from server.agent.upload_session import UploadSessionManager
+from common.mixed_mode_io import MixedModeDecoder
 
 logger = logging.getLogger(__name__)
 
@@ -81,61 +82,9 @@ def handle_put_chunk(header: AppHeader, payload: bytes, policy_guard: PolicyGuar
     Appends data to file via session manager.
     """
     try:
-        # Payload Layout:
-        # JSON Metadata length logic is not in spec for CHUNK?
-        # WAIT. Spec 8.13.2 PUT_CHUNK Payload:
-        # "{ upload_id: ..., offset: ..., chunk_len: ... } <raw bytes>"
-        # We need to separate JSON from Raw Bytes.
-        # "Unless otherwise specified, metadata fields SHALL be encoded as UTF-8 JSON immediately following the fixed 12-byte header.
-        # Binary data (file chunks) SHALL follow metadata fields as raw bytes."
-        #
-        # Initial parsing strategy:
-        # We assume the JSON is a valid object. We need to find where it ends.
-        # In a real framing, we'd have a length prefix for JSON.
-        # But here, we might have to scan for the closing brace '}'?
-        # OR, relying on the fact that python `json.loads` can't handle trailing garbage easily without a pointer.
-        # Actually `json.CMD` isn't standard.
-        #
-        # Python's `json.JSONDecoder.raw_decode` helps extract JSON from start of string.
-        # Let's use that.
-        
-        decoder = json.JSONDecoder()
-        meta_str = payload.decode('utf-8', errors='ignore') # Decode loosely to find JSON end
-        # This might be risky if binary data contains valid utf-8 sequences resembling JSON, but usually OK.
-        # Better: Decode as much as possible? 
-        # AppEnvelope usually doesn't separate.
-        #
-        # Let's try `raw_decode`.
-        meta, idx = decoder.raw_decode(meta_str)
-        
-        # Extract binary chunk
-        # payload[idx:] isn't safe because `raw_decode` index is char index, not byte index.
-        # We need byte offset.
-        # Re-encode the matched JSON string to get byte length?
-        # This is flaky if encoding varies.
-        #
-        # Alternative: The spec might imply a fixed header for metadata length?
-        # Protocol 8.1 says "Fixed Header (12 Bytes) ... Payload follows".
-        # 8.13 "Binary data ... SHALL follow metadata fields".
-        # It doesn't explicitly say "Metadata Length" field exists.
-        # This is a spec gap. Strict interpretation: Scan for JSON end.
-        #
-        # Workaround:
-        # Re-encode the parsed `meta` dict to bytes to find its length?
-        # Only if we key-sort the same way? No, formatting matters (spaces).
-        #
-        # Robust way: 
-        # The JSON decoder index IS consistent with the unicode string.
-        # If we decoded the WHOLE payload as utf-8 (which might fail for binary), we are stuck.
-        # 
-        # Let's assume the JSON is purely ASCII/UTF-8 and the chunk starts after.
-        # We can find the first '}' and try to parse up to there? No, nested objects.
-        # 
-        # Let's use the decoder on the string.
-        # To get byte offset: `len(meta_str[:idx].encode('utf-8'))`.
-        
-        chunk_data_start = len(meta_str[:idx].encode('utf-8'))
-        chunk_data = payload[chunk_data_start:]
+        # Use MixedModeDecoder for robust parsing
+        # (Client uses MixedModeEncoder which adds 4-byte length prefix)
+        meta, chunk_data = MixedModeDecoder.decode(payload)
         
         # Meta Fields
         upload_id = meta.get('upload_id')
@@ -174,5 +123,5 @@ def handle_put_chunk(header: AppHeader, payload: bytes, policy_guard: PolicyGuar
             "status": msg
         }
 
-    except (json.JSONDecodeError, UnicodeDecodeError):
-        raise ValueError("Invalid metadata format")
+    except (ValueError, json.JSONDecodeError) as e:
+        raise ValueError(f"Invalid metadata format: {e}")
