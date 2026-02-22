@@ -1,145 +1,184 @@
 """
-RUDP Server Transport Module (Day 6).
-Handles UDP socket management, peer multiplexing, and strict envelope reassembly.
+RUDP Server Transport Module (Day 8).
+Handles UDP socket management, peer multiplexing, and isolated Reliable UDP state machines.
 """
 import socket
 import logging
 import time
 from typing import Dict, Tuple, Optional, Callable
 
-from common.app_envelope import decode_header, HEADER_SIZE
-from common.constants import AGENT_SERVER_PORT, LOOPBACK_IP
+from common.rudp_packet import RUDPPacket, ChecksumError, FLAG_ACK
+from common.rudp_sender import RUDPSender
+from common.rudp_receiver import RUDPReceiver
+from common.constants import AGENT_SERVER_PORT, LOOPBACK_IP, MAX_RWND
 
 logger = logging.getLogger(__name__)
 
-class ConnectionPeerState:
+class RUDPConnection:
     """
-    Maintains state for a single RUDP peer (client).
-    Handles basic buffering and strict application envelope reassembly.
+    Virtual Connection Container encapsulating state for a specific (IP, Port) peer.
+    Maintains isolated send and receive reliable states.
     """
-    def __init__(self, addr: Tuple[str, int]):
+    def __init__(self, addr: Tuple[str, int], 
+                 send_raw_packet_cb: Callable[[bytes, Tuple[str, int]], None],
+                 app_delivery_cb: Callable[[bytes, Tuple[str, int]], None]):
         self.addr = addr
-        self.receive_buffer = bytearray()
+        
+        # We bind the global transport callbacks to this specific peer's address
+        def bound_send_cb(data: bytes):
+            send_raw_packet_cb(data, self.addr)
+            
+        def bound_app_cb(data: bytes):
+            app_delivery_cb(data, self.addr)
+            
+        self.sender = RUDPSender(send_callback=bound_send_cb, window_size=MAX_RWND)
+        self.receiver = RUDPReceiver(deliver_callback=bound_app_cb)
         self.last_seen = time.time()
-        self.expected_payload_len: Optional[int] = None
 
-    def append_data(self, data: bytes) -> Optional[bytes]:
-        """
-        Append received bytes to buffer and attempt to extract a full message.
-        Returns the full message bytes (including header) if complete, else None.
-        """
-        self.receive_buffer.extend(data)
-        self.last_seen = time.time()
-
-        # Need at least HEADER_SIZE to know payload length
-        if self.expected_payload_len is None:
-            if len(self.receive_buffer) >= HEADER_SIZE:
-                try:
-                    header = decode_header(bytes(self.receive_buffer[:HEADER_SIZE]))
-                    self.expected_payload_len = header.payload_len
-                    logger.debug(f"Peer {self.addr}: Header parsed, expecting {self.expected_payload_len} bytes payload")
-                except Exception as e:
-                    logger.error(f"Peer {self.addr}: Invalid header received: {e}. Clearing buffer.")
-                    self.receive_buffer.clear()
-                    return None
-            else:
-                return None
-
-        # Check if full payload received
-        if len(self.receive_buffer) >= HEADER_SIZE + self.expected_payload_len:
-            full_msg = bytes(self.receive_buffer[:HEADER_SIZE + self.expected_payload_len])
-            # Keep remaining bytes for next message
-            self.receive_buffer = self.receive_buffer[HEADER_SIZE + self.expected_payload_len:]
-            self.expected_payload_len = None
-            return full_msg
-
-        return None
-
-    def tick(self):
-        """
-        Placeholder for future retransmission/timeout logic.
-        """
-        pass
 
 class RUDPServerTransport:
     """
     Modular RUDP Server Transport component.
-    Multiplexes multiple peers by (IP, Port) and delivers full messages upward.
+    Multiplexes multiple peers by (IP, Port) and ticks them safely in a single thread.
     """
+    SOCKET_POLL_TIMEOUT = 0.05
+
     def __init__(self, port: int = AGENT_SERVER_PORT, bind_ip: str = LOOPBACK_IP):
         self.server_addr = (bind_ip, port)
         self.sock: Optional[socket.socket] = None
-        self.peers: Dict[Tuple[str, int], ConnectionPeerState] = {}
+        self.connections: Dict[Tuple[str, int], RUDPConnection] = {}
         self.running = False
+        self._app_message_handler: Optional[Callable[[bytes, Tuple[str, int]], None]] = None
 
-    def serve(self, on_message_cb: Callable[[str, bytes], bytes]):
+    def set_message_handler(self, handler: Callable[[bytes, Tuple[str, int]], None]) -> None:
         """
-        Main transport event loop.
-        on_message_cb(client_id, full_message_bytes) -> response_bytes
+        Registers the application's callback for correctly reassembled payloads.
+        The callback should expect (data: bytes, client_addr: tuple).
+        """
+        self._app_message_handler = handler
+
+    def _deliver_to_app(self, data: bytes, client_addr: Tuple[str, int]) -> None:
+        """Internal bridge from any connection's RUDPReceiver to the Application."""
+        if self._app_message_handler:
+            self._app_message_handler(data, client_addr)
+        else:
+            logger.warning(f"Received ordered data from {client_addr} but no app handler is set.")
+
+    def send(self, data: bytes, request_id: int, client_addr: Tuple[str, int]) -> None:
+        """
+        Application-facing send method. 
+        Routes data down to the specific client's isolated sender engine.
+        """
+        if client_addr not in self.connections:
+            # We lazy-initialize connections just in case the server replies to a peer
+            # that somehow wasn't instantiated (rare, but handleable).
+            logger.info(f"Lazy-initializing RUDPConnection for targeted send to {client_addr}")
+            self.connections[client_addr] = RUDPConnection(
+                addr=client_addr,
+                send_raw_packet_cb=self.send_raw_packet,
+                app_delivery_cb=self._deliver_to_app
+            )
+            
+        self.connections[client_addr].sender.enqueue_data(data, request_id, time.time())
+
+    def start(self) -> None:
+        """
+        Main transport event loop (formerly 'serve()').
+        Starts tracking connections and processing raw I/O.
         """
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         try:
-            self.sock.setblocking(False)
+            # Replaced setblocking(False) with strict poll timeout ticking
+            self.sock.settimeout(self.SOCKET_POLL_TIMEOUT)
             self.sock.bind(self.server_addr)
             self.running = True
             logger.info(f"RUDP Transport listening on {self.server_addr}")
 
-            while self.running:
-                try:
-                    data, addr = self.sock.recvfrom(2048)  # Sufficient for single UDP datagram
-                    if not data:
-                        continue
-                    
-                    self._handle_datagram(data, addr, on_message_cb)
-                except BlockingIOError:
-                    # Occurs when no data is available on non-blocking socket
-                    time.sleep(0.01) # Avoid tight loop CPU spike
-                    self._tick_peers()
-                    continue
-                except socket.error as e:
-                    if self.running:
-                        logger.error(f"Socket error in transport loop: {e}")
-                    break
+            self._receive_loop()
         except Exception as e:
             logger.critical(f"RUDP Transport startup failed: {e}")
         finally:
             self.close()
 
-    def _handle_datagram(self, data: bytes, addr: Tuple[str, int], on_message_cb: Callable):
+    def _receive_loop(self) -> None:
         """
-        Route incoming datagram to peer-specific reassembly buffer.
+        Background loop that acts as a multiplexer and global tick-generator.
         """
-        if addr not in self.peers:
+        while self.running:
+            current_time = time.time()
+            data = None
+            addr = None
+            
+            try:
+                # 65535 theoretical max UDP datagram
+                data, addr = self.sock.recvfrom(65535)
+            except (socket.timeout, BlockingIOError):
+                # Timeout is expected to yield CPU and run tick engine
+                pass
+            except OSError as e:
+                if not self.running:
+                    break
+                logger.error(f"Socket error in transport loop: {e}")
+                time.sleep(self.SOCKET_POLL_TIMEOUT)
+            except Exception as e:
+                logger.exception(f"Unexpected error in receive loop: {e}")
+                time.sleep(self.SOCKET_POLL_TIMEOUT)
+                
+            if data and addr:
+                self._handle_datagram(data, addr, current_time)
+                
+            # Broadcast the global timeout tick to all isolated sender connections
+            self._tick_connections(time.time())
+
+    def _handle_datagram(self, data: bytes, addr: Tuple[str, int], current_time: float) -> None:
+        """
+        Parse raw datagram, resolve target RUDPConnection, and demultiplex packet.
+        """
+        try:
+            packet = RUDPPacket.unpack(data)
+        except (ValueError, ChecksumError) as parse_error:
+            logger.warning(f"Corrupted packet from {addr} received, dropping... Details: {parse_error}")
+            return
+
+        if addr not in self.connections:
             logger.info(f"New RUDP peer session: {addr}")
-            self.peers[addr] = ConnectionPeerState(addr)
+            self.connections[addr] = RUDPConnection(
+                addr=addr,
+                send_raw_packet_cb=self.send_raw_packet,
+                app_delivery_cb=self._deliver_to_app
+            )
 
-        peer = self.peers[addr]
-        full_msg = peer.append_data(data)
+        conn = self.connections[addr]
+        conn.last_seen = current_time
 
-        if full_msg:
-            # client_id is the string representation of Source (IP, Port)
-            client_id = f"{addr[0]}:{addr[1]}"
-            logger.info(f"Full message reassembled from {client_id}. Delivering.")
+        if packet.is_ack:
+            conn.sender.on_ack_received(packet.ack_num, current_time)
             
-            # Execute application logic via callback
-            response = on_message_cb(client_id, full_msg)
+        if packet.has_data:
+            ack_num, rwnd, flags = conn.receiver.process_segment(packet)
             
-            if response:
-                logger.info(f"Sending response back to {client_id} ({len(response)} bytes).")
-                self.send_bytes(addr, response)
+            # Immediately acknowledge the data chunk back to this client
+            ack_packet = RUDPPacket(
+                seq_num=0,
+                ack_num=ack_num,
+                flags=flags,
+                rwnd=rwnd
+            )
+            self.send_raw_packet(ack_packet.pack(), addr)
 
-    def _tick_peers(self):
+    def _tick_connections(self, current_time: float) -> None:
         """
-        Hooks for future reliability maintenance (timeouts, retransmits).
+        Run the tick-engine evaluated RTO sweep on all active connections.
         """
-        for addr, peer in list(self.peers.items()):
-            peer.tick()
-            # Future: Cleanup inactive peers (e.g., if last_seen > 30s)
+        for conn in self.connections.values():
+            try:
+                conn.sender.check_timeouts(current_time)
+            except Exception as e:
+                logger.error(f"Error checking timeouts for {conn.addr}: {e}")
 
-    def send_bytes(self, addr: Tuple[str, int], data: bytes):
+    def send_raw_packet(self, data: bytes, addr: Tuple[str, int]) -> None:
         """
         Directly send bytes to peer via UDP.
-        (Layered above standard socket.sendto)
         """
         if not self.sock:
             return
@@ -147,9 +186,10 @@ class RUDPServerTransport:
         try:
             self.sock.sendto(data, addr)
         except Exception as e:
-            logger.error(f"Transport failed to send to {addr}: {e}")
+            if self.running:
+                logger.error(f"Transport failed to send to {addr}: {e}")
 
-    def close(self):
+    def close(self) -> None:
         """
         Graceful shutdown: stop loop and close socket.
         """
