@@ -22,6 +22,7 @@ class RUDPClientTransport:
     
     # Tick rate for non-blocking recv loops
     SOCKET_POLL_TIMEOUT = 0.05
+    is_async = True
 
     def __init__(self, server_host: str, server_port: int) -> None:
         """
@@ -64,6 +65,10 @@ class RUDPClientTransport:
         Application-facing send method. Pushes data into the sender's queue.
         """
         self.sender.enqueue_data(data, request_id, time.time())
+
+    def connect(self, timeout: float = 5.0) -> None:
+        """Polymorphic alias to start()"""
+        self.start()
 
     def start(self) -> None:
         """

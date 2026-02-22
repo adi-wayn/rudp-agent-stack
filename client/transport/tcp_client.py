@@ -28,6 +28,8 @@ class TCPClient:
     """
     Reusable TCP Client Wrapper.
     """
+    is_async = False
+
     def __init__(self, server_ip: str = LOOPBACK_IP, server_port: int = AGENT_SERVER_PORT):
         self.server_addr = (server_ip, server_port)
         self.sock: Optional[socket.socket] = None
@@ -54,6 +56,12 @@ class TCPClient:
             self.sock.sendall(data)
         except socket.error as e:
             raise ConnectionError(f"Socket error during send: {e}") from e
+
+    def send(self, data: bytes, request_id: int = 0) -> None:
+        """
+        Polymorphic interface matching RUDP for generic send().
+        """
+        self.send_bytes(data)
 
     def receive_exact(self, nbytes: int) -> bytes:
         """

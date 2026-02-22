@@ -6,6 +6,7 @@ import json
 import time
 import logging
 import socket
+import threading
 from typing import Any, Dict, Optional, Tuple, Union
 
 from client.transport.tcp_client import TCPClient
@@ -57,7 +58,11 @@ class AgentClient:
         self.transport = transport or TCPClient()
         self.request_id_manager = RequestIdManager()
         
-
+        # Day 8 - Async Responses
+        self._pending_requests: Dict[int, Dict[str, Any]] = {}
+        if getattr(self.transport, 'is_async', False) is True:
+            if hasattr(self.transport, 'set_message_handler'):
+                self.transport.set_message_handler(self._on_message_received)
         
         # Initialize Dispatcher and Register Handlers
         self.dispatcher = ClientDispatcher()
@@ -72,6 +77,26 @@ class AgentClient:
         self.dispatcher.register(OP_TASK_SEARCH_REPORT, TaskHandler(OP_TASK_SEARCH_REPORT))
         self.dispatcher.register(OP_TASK_FILTER_LINES, TaskHandler(OP_TASK_FILTER_LINES))
         self.dispatcher.register(OP_TASK_HASH_AND_STORE, TaskHandler(OP_TASK_HASH_AND_STORE))
+
+    def _on_message_received(self, data: bytes) -> None:
+        """
+        Async delivery callback from RUDP Transport.
+        Extracts the request_id from the envelope and triggers the awaiting Event.
+        """
+        if len(data) < HEADER_SIZE:
+            return
+            
+        try:
+            header = decode_header(data[:HEADER_SIZE])
+            req_id = header.request_id
+            
+            if req_id in self._pending_requests:
+                self._pending_requests[req_id]["response"] = data
+                self._pending_requests[req_id]["event"].set()
+            else:
+                logger.warning(f"Discarded late or unknown packet for ReqID: {req_id}")
+        except Exception as e:
+            logger.error(f"Failed to process async packet: {e}")
 
     def execute(self, opcode: int, request_id_override: Optional[int] = None, **kwargs) -> OperationResult:
         """
@@ -145,24 +170,50 @@ class AgentClient:
                 # 2. Build Envelope
                 full_message = encode_message(spec.opcode, 0, generated_id, payload_bytes, request_id_override=override)
                 
-                # 3. Send
-                self.transport.send_bytes(full_message)
+                is_async = getattr(self.transport, 'is_async', False) is True
                 
-                # 4. Receive Header
-                header_data = self.transport.receive_exact(HEADER_SIZE)
-                header = decode_header(header_data)
-                
-                # Validation
-                if header.payload_len > MAX_PAYLOAD_LEN:
-                    raise ValueError(f"Payload too large: {header.payload_len}")
+                if is_async:
+                    # RUDP Flow: Event driven
+                    event = threading.Event()
+                    self._pending_requests[final_req_id] = {"event": event, "response": None}
                     
-                if header.request_id != final_req_id:
-                     # Strict check
-                     self.transport.close()
-                     raise ConnectionError("Request ID Mismatch")
-                     
-                # 5. Receive Payload
-                payload_data = self.transport.receive_exact(header.payload_len)
+                    self.transport.send(full_message, final_req_id)
+                    
+                    # Generous wait. RUDP naturally handles its own micro-retries and timeouts.
+                    timeout_val = 15.0
+                    
+                    if not event.wait(timeout=timeout_val):
+                        self._pending_requests.pop(final_req_id, None)
+                        raise TimeoutError(f"RUDP response timed out after {timeout_val}s")
+                        
+                    response_data = self._pending_requests.pop(final_req_id)["response"]
+                    header = decode_header(response_data[:HEADER_SIZE])
+                    
+                    if header.payload_len > MAX_PAYLOAD_LEN:
+                        raise ValueError(f"Payload too large: {header.payload_len}")
+                        
+                    payload_data = response_data[HEADER_SIZE:HEADER_SIZE+header.payload_len]
+                
+                else:
+                    # TCP Flow: Synchronous
+                    # 3. Send
+                    self.transport.send_bytes(full_message)
+                    
+                    # 4. Receive Header
+                    header_data = self.transport.receive_exact(HEADER_SIZE)
+                    header = decode_header(header_data)
+                    
+                    # Validation
+                    if header.payload_len > MAX_PAYLOAD_LEN:
+                        raise ValueError(f"Payload too large: {header.payload_len}")
+                        
+                    if header.request_id != final_req_id:
+                         # Strict check
+                         self.transport.close()
+                         raise ConnectionError("Request ID Mismatch")
+                         
+                    # 5. Receive Payload
+                    payload_data = self.transport.receive_exact(header.payload_len)
                 
                 # 6. Decode Strategy (Status-Aware)
                 

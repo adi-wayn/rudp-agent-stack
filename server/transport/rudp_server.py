@@ -87,6 +87,7 @@ class RUDPServerTransport:
         Starts tracking connections and processing raw I/O.
         """
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         try:
             # Replaced setblocking(False) with strict poll timeout ticking
             self.sock.settimeout(self.SOCKET_POLL_TIMEOUT)
