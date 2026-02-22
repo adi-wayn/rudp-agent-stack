@@ -3,7 +3,7 @@ Transport Factory.
 Centralizes creation of Transport instances (TCP/RUDP).
 """
 from client.transport.tcp_client import TCPClient
-from client.transport.rudp_client import RUDPClientSocket
+from client.transport.rudp_client import RUDPClientTransport
 
 class TransportFactory:
     """
@@ -18,6 +18,6 @@ class TransportFactory:
             return TCPClient(server_ip, server_port)
         elif mode.lower() == 'rudp':
             # RUDP wrapper or socket
-            return RUDPClientSocket()
+            return RUDPClientTransport(server_ip, server_port)
         else:
             raise ValueError(f"Unknown transport mode: {mode}")
