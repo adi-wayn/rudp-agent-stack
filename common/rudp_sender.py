@@ -6,11 +6,18 @@ Operates as a state machine using external time ticks for timeouts.
 import collections
 import logging
 from typing import Callable, Dict, Any
+from enum import Enum
 
 from common.rudp_packet import RUDPPacket
 from common.constants import MSS, INITIAL_RTO, MAX_RWND
 
 logger = logging.getLogger(__name__)
+
+class CCState(Enum):
+    CC_SLOW_START = 1
+    CC_AVOIDANCE = 2
+    CC_FAST_RECOVERY = 3
+
 
 class RUDPSender:
     """
@@ -25,6 +32,7 @@ class RUDPSender:
             send_callback: Function to invoke to send raw bytes over the network.
             window_size: Maximum number of unacknowledged packets allowed in flight.
         """
+        from common.constants import INITIAL_CWND, INITIAL_SSTHRESH
         self.send_callback = send_callback
         self.window_size = window_size
         self.rto = INITIAL_RTO
@@ -32,7 +40,22 @@ class RUDPSender:
         self.base = 0
         self.next_seq = 0
         
-        # Maps seq_num -> {"packet": RUDPPacket, "sent_time": float}
+        # Congestion Control State
+        self.cc_state = CCState.CC_SLOW_START
+        self.cwnd = float(INITIAL_CWND)
+        self.ssthresh = float(INITIAL_SSTHRESH)
+        self.dup_ack_count = 0
+        self.last_ack_received = 0
+        self.inflight_bytes = 0
+        
+        # Dynamic RTO State (Jacobson/Karels)
+        from common.constants import MAX_RTO
+        self.srtt = None
+        self.rttvar = None
+        self.min_rto = 0.1
+        self.max_rto = float(MAX_RTO)
+        
+        # Maps seq_num -> {"packet": RUDPPacket, "sent_time": float, "is_retransmitted": bool}
         self.unacked_packets: Dict[int, Dict[str, Any]] = {}
         
         # Packets waiting to enter the window
@@ -78,16 +101,23 @@ class RUDPSender:
     def _try_send(self, current_time: float) -> None:
         """
         Pushes packets from the send_buffer into the network if the window allows.
-        Pipelining up to `window_size` in-flight packets.
+        Pipelining bounded by congestion window (cwnd) in bytes.
         """
-        while len(self.unacked_packets) < self.window_size and self.send_buffer:
+        while self.send_buffer:
+            next_packet = self.send_buffer[0]
+            next_len = len(next_packet.payload)
+            if self.inflight_bytes + next_len > self.cwnd:
+                break
+                
             packet = self.send_buffer.popleft()
             
-            # Store packet in unacked map with sent timestamp
+            # Store packet in unacked map with sent timestamp and Karn's flag
             self.unacked_packets[packet.seq_num] = {
                 "packet": packet,
-                "sent_time": current_time
+                "sent_time": current_time,
+                "is_retransmitted": False
             }
+            self.inflight_bytes += len(packet.payload)
             
             try:
                 self.send_callback(packet.pack())
@@ -103,17 +133,82 @@ class RUDPSender:
             ack_num: The acknowledged sequence number.
             current_time: The current timestamp in seconds.
         """
-        # Spec 8.16.3: "An ACK for N implies all packets with seq < N are acknowledged."
         if ack_num > self.base:
+            # New ACK
             self.base = ack_num
+            self.dup_ack_count = 0
+            self.last_ack_received = ack_num
             
-            # Remove acknowledged packets
+            # Remove acknowledged packets and update inflight_bytes
             keys_to_remove = [seq for seq in self.unacked_packets.keys() if seq < ack_num]
+            highest_acked = ack_num - 1
+            
+            if highest_acked in keys_to_remove:
+                packet_info = self.unacked_packets[highest_acked]
+                
+                # Karn's Algorithm Phase 1: Ignore retransmitted packets for RTT calculations
+                if not packet_info["is_retransmitted"]:
+                    sample_rtt = current_time - packet_info["sent_time"]
+                    from common.constants import ALPHA, BETA
+                    
+                    if self.srtt is None:
+                        # First measurement
+                        self.srtt = sample_rtt
+                        self.rttvar = sample_rtt / 2.0
+                    else:
+                        # EWMA calculation for subsequent measurements
+                        self.rttvar = (1.0 - BETA) * self.rttvar + BETA * abs(self.srtt - sample_rtt)
+                        self.srtt = (1.0 - ALPHA) * self.srtt + ALPHA * sample_rtt
+                        
+                    # Update RTO based on smoothed RTT and Variance
+                    raw_rto = self.srtt + 4.0 * self.rttvar
+                    
+                    # Clamp the RTO between bounds
+                    self.rto = max(self.min_rto, min(raw_rto, self.max_rto))
+                    
             for seq in keys_to_remove:
+                packet = self.unacked_packets[seq]["packet"]
+                self.inflight_bytes -= len(packet.payload)
                 del self.unacked_packets[seq]
+                
+            # Congestion Control State Machine (Growth)
+            if self.cc_state == CCState.CC_SLOW_START:
+                self.cwnd += MSS
+                if self.cwnd >= self.ssthresh:
+                    self.cc_state = CCState.CC_AVOIDANCE
+            elif self.cc_state == CCState.CC_AVOIDANCE:
+                self.cwnd += (MSS * MSS) / self.cwnd
+            elif self.cc_state == CCState.CC_FAST_RECOVERY:
+                self.cwnd = float(self.ssthresh)
+                self.cc_state = CCState.CC_AVOIDANCE
                 
             # Window has opened up, try to send more queued packets
             self._try_send(current_time)
+            
+        elif ack_num == self.last_ack_received and ack_num == self.base:
+            # Duplicate ACK
+            self.dup_ack_count += 1
+            if self.dup_ack_count == 3 and self.cc_state != CCState.CC_FAST_RECOVERY:
+                # Enter Fast Recovery
+                self.cc_state = CCState.CC_FAST_RECOVERY
+                self.ssthresh = max(self.cwnd / 2.0, 2.0 * MSS)
+                self.cwnd = self.ssthresh + 3.0 * MSS
+                
+                # Fast Retransmit
+                if self.base in self.unacked_packets:
+                    packet_info = self.unacked_packets[self.base]
+                    packet_info["is_retransmitted"] = True
+                    packet_info["sent_time"] = current_time
+                    packet = packet_info["packet"]
+                    try:
+                        self.send_callback(packet.pack())
+                    except Exception as e:
+                        logger.error("Failed fast retransmit seq=%d: %s", self.base, e)
+                        
+            elif self.dup_ack_count > 3 and self.cc_state == CCState.CC_FAST_RECOVERY:
+                # Inflate window
+                self.cwnd += MSS
+                self._try_send(current_time)
 
     def check_timeouts(self, current_time: float) -> None:
         """
@@ -134,8 +229,17 @@ class RUDPSender:
             if current_time - oldest_info["sent_time"] >= self.rto:
                 logger.debug("Timeout for seq=%d, retransmitting.", self.base)
                 
-                # Update sent time to reset the timer
+                # Congestion Control State Machine (Timeout)
+                self.ssthresh = max(self.cwnd / 2.0, 2.0 * MSS)
+                self.cwnd = float(MSS)
+                self.cc_state = CCState.CC_SLOW_START
+                
+                # Karn's Algorithm Phase 2: Exponential Backoff
+                self.rto = min(self.rto * 2.0, self.max_rto)
+                
+                # Update sent time to reset the timer and mark as retransmitted
                 oldest_info["sent_time"] = current_time
+                oldest_info["is_retransmitted"] = True
                 
                 # Retransmit ONLY the oldest unacknowledged packet
                 try:
