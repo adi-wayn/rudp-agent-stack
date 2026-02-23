@@ -48,7 +48,14 @@ class RUDPSender:
         self.last_ack_received = 0
         self.inflight_bytes = 0
         
-        # Maps seq_num -> {"packet": RUDPPacket, "sent_time": float}
+        # Dynamic RTO State (Jacobson/Karels)
+        from common.constants import MAX_RTO
+        self.srtt = None
+        self.rttvar = None
+        self.min_rto = 0.1
+        self.max_rto = float(MAX_RTO)
+        
+        # Maps seq_num -> {"packet": RUDPPacket, "sent_time": float, "is_retransmitted": bool}
         self.unacked_packets: Dict[int, Dict[str, Any]] = {}
         
         # Packets waiting to enter the window
@@ -104,10 +111,11 @@ class RUDPSender:
                 
             packet = self.send_buffer.popleft()
             
-            # Store packet in unacked map with sent timestamp
+            # Store packet in unacked map with sent timestamp and Karn's flag
             self.unacked_packets[packet.seq_num] = {
                 "packet": packet,
-                "sent_time": current_time
+                "sent_time": current_time,
+                "is_retransmitted": False
             }
             self.inflight_bytes += len(packet.payload)
             
@@ -133,6 +141,31 @@ class RUDPSender:
             
             # Remove acknowledged packets and update inflight_bytes
             keys_to_remove = [seq for seq in self.unacked_packets.keys() if seq < ack_num]
+            highest_acked = ack_num - 1
+            
+            if highest_acked in keys_to_remove:
+                packet_info = self.unacked_packets[highest_acked]
+                
+                # Karn's Algorithm Phase 1: Ignore retransmitted packets for RTT calculations
+                if not packet_info["is_retransmitted"]:
+                    sample_rtt = current_time - packet_info["sent_time"]
+                    from common.constants import ALPHA, BETA
+                    
+                    if self.srtt is None:
+                        # First measurement
+                        self.srtt = sample_rtt
+                        self.rttvar = sample_rtt / 2.0
+                    else:
+                        # EWMA calculation for subsequent measurements
+                        self.rttvar = (1.0 - BETA) * self.rttvar + BETA * abs(self.srtt - sample_rtt)
+                        self.srtt = (1.0 - ALPHA) * self.srtt + ALPHA * sample_rtt
+                        
+                    # Update RTO based on smoothed RTT and Variance
+                    raw_rto = self.srtt + 4.0 * self.rttvar
+                    
+                    # Clamp the RTO between bounds
+                    self.rto = max(self.min_rto, min(raw_rto, self.max_rto))
+                    
             for seq in keys_to_remove:
                 packet = self.unacked_packets[seq]["packet"]
                 self.inflight_bytes -= len(packet.payload)
@@ -163,7 +196,10 @@ class RUDPSender:
                 
                 # Fast Retransmit
                 if self.base in self.unacked_packets:
-                    packet = self.unacked_packets[self.base]["packet"]
+                    packet_info = self.unacked_packets[self.base]
+                    packet_info["is_retransmitted"] = True
+                    packet_info["sent_time"] = current_time
+                    packet = packet_info["packet"]
                     try:
                         self.send_callback(packet.pack())
                     except Exception as e:
@@ -198,8 +234,12 @@ class RUDPSender:
                 self.cwnd = float(MSS)
                 self.cc_state = CCState.CC_SLOW_START
                 
-                # Update sent time to reset the timer
+                # Karn's Algorithm Phase 2: Exponential Backoff
+                self.rto = min(self.rto * 2.0, self.max_rto)
+                
+                # Update sent time to reset the timer and mark as retransmitted
                 oldest_info["sent_time"] = current_time
+                oldest_info["is_retransmitted"] = True
                 
                 # Retransmit ONLY the oldest unacknowledged packet
                 try:

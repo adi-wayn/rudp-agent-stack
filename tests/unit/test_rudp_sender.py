@@ -128,5 +128,55 @@ class TestRUDPSender(unittest.TestCase):
         self.assertEqual(packet.msg_id, 50)
         self.assertEqual(packet.seq_num, 0)
 
-if __name__ == "__main__":
-    unittest.main()
+    def test_dynamic_rto_calculation(self):
+        """5. Validates Jacobson/Karels math and Karn's Backoff in Dynamic RTO."""
+        from common.constants import ALPHA, BETA, MAX_RTO
+        
+        payload = b"R" * (1 * MSS)
+        self.sender.enqueue_data(payload, 102, self.current_time)
+        
+        # Test 1: First RTT Sample is measured directly
+        self.current_time += 0.200 # +200ms RTT
+        self.sender.on_ack_received(1, self.current_time)
+        
+        self.assertAlmostEqual(self.sender.srtt, 0.200)
+        self.assertAlmostEqual(self.sender.rttvar, 0.100)
+        
+        # RTO = srtt + 4 * rttvar = 0.200 + 0.400 = 0.600
+        self.assertAlmostEqual(self.sender.rto, 0.600)
+        
+        # Enqueue new data
+        payload = b"E" * (1 * MSS)
+        self.sender.enqueue_data(payload, 103, self.current_time)
+        
+        # Test 2: Second RTT Sample (EWMA logic) - suppose network speeds up
+        self.current_time += 0.100 # + 100ms RTT
+        self.sender.on_ack_received(2, self.current_time)
+        
+        # Expected Math:
+        # rttvar = (1-0.25)*0.100 + 0.25*abs(0.200 - 0.100) = 0.075 + 0.025 = 0.100
+        # srtt = (1-0.125)*0.200 + 0.125*0.100 = 0.175 + 0.0125 = 0.1875
+        self.assertAlmostEqual(self.sender.rttvar, 0.100)
+        self.assertAlmostEqual(self.sender.srtt, 0.1875)
+        
+        # RTO = 0.1875 + 4 * 0.100 = 0.5875
+        self.assertAlmostEqual(self.sender.rto, 0.5875)
+        
+        # Test 3: Karn's Backoff 
+        payload = b"K" * (1 * MSS)
+        self.sender.enqueue_data(payload, 104, self.current_time)
+        
+        # Force a timeout event precisely
+        self.current_time += self.sender.rto + 0.01
+        self.sender.check_timeouts(self.current_time)
+        
+        # RTO should now double
+        self.assertAlmostEqual(self.sender.rto, 0.5875 * 2.0)
+        
+        # Verify the "is_retransmitted" flag triggered Karn's algorithm
+        # Send an ACK for this specific packet and verify SRTT/RTTVAR DO NOT CHANGE
+        self.current_time += 0.500
+        self.sender.on_ack_received(3, self.current_time)
+        
+        self.assertAlmostEqual(self.sender.rttvar, 0.100) # Unchanged from previous!
+        self.assertAlmostEqual(self.sender.srtt, 0.1875) # Unchanged from previous!
