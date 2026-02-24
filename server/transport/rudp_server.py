@@ -12,6 +12,7 @@ from common.rudp_sender import RUDPSender
 from common.rudp_receiver import RUDPReceiver
 from common.constants import AGENT_SERVER_PORT, LOOPBACK_IP, MAX_RWND
 
+logging.basicConfig(level=logging.INFO, format='[%(asctime)s] [RUDP-Server] %(message)s')
 logger = logging.getLogger(__name__)
 
 class RUDPConnection:
@@ -89,9 +90,9 @@ class RUDPServerTransport:
         self.sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
         try:
-            # Replaced setblocking(False) with strict poll timeout ticking
-            self.sock.settimeout(self.SOCKET_POLL_TIMEOUT)
             self.sock.bind(self.server_addr)
+            # Replaced setblocking(False) with strict poll timeout ticking after bind
+            self.sock.settimeout(self.SOCKET_POLL_TIMEOUT)
             self.running = True
             logger.info(f"RUDP Transport listening on {self.server_addr}")
 

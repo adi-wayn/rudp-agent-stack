@@ -33,6 +33,7 @@ from common.constants import (
     OP_TASK_SEARCH_REPORT, OP_TASK_FILTER_LINES, OP_TASK_HASH_AND_STORE
 )
 
+
 logger = logging.getLogger("AgentClient")
 
 class RequestIdManager:

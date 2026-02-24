@@ -27,8 +27,9 @@ class RUDPReceiver:
         Initializes the receiver state.
         :param deliver_callback: Function to call with in-order payload bytes.
         """
-        self.expected_seq = 1  # Next in-order sequence to deliver
-        self.ooo_buffer: Dict[int, bytes] = {}  # seq -> payload
+        self.expected_seq = 0  # Next in-order sequence to deliver
+        self.ooo_buffer: Dict[int, RUDPPacket] = {}  # seq -> packet
+        self.assembly_buffer = bytearray()
         self.deliver_callback = deliver_callback
         
         # Day 9 Flow Control State
@@ -79,16 +80,24 @@ class RUDPReceiver:
         else:
             # 3. Handle In-order arrival
             if seq == self.expected_seq:
-                action = "DELIVER"
-                self.deliver_callback(segment.payload)
+                action = "DELIVER (or Assembling)"
+                self.assembly_buffer.extend(segment.payload)
+                if segment.is_fin:
+                    action = "DELIVER_FULL"
+                    self.deliver_callback(bytes(self.assembly_buffer))
+                    self.assembly_buffer.clear()
+                    
                 self.expected_seq += 1
                 self.stats["delivered"] += 1
                 
                 # Drain contiguous buffered segments
                 drained_range_start = self.expected_seq
                 while self.expected_seq in self.ooo_buffer:
-                    payload = self.ooo_buffer.pop(self.expected_seq)
-                    self.deliver_callback(payload)
+                    buffered_segment = self.ooo_buffer.pop(self.expected_seq)
+                    self.assembly_buffer.extend(buffered_segment.payload)
+                    if buffered_segment.is_fin:
+                        self.deliver_callback(bytes(self.assembly_buffer))
+                        self.assembly_buffer.clear()
                     self.expected_seq += 1
                     self.stats["delivered"] += 1
                 
@@ -99,12 +108,13 @@ class RUDPReceiver:
             else:
                 action = "BUFFER"
                 if seq not in self.ooo_buffer:
-                    self.ooo_buffer[seq] = segment.payload
+                    self.ooo_buffer[seq] = segment
                     self.stats["buffered"] += 1
                 # If already in buffer, we don't double count, just ACK again
 
         # 5. Cumulative ACK & rwnd Advertisement (Day 9)
-        ack_num = self.expected_seq - 1
+        # We send the NEXT expected sequence as the ACK
+        ack_num = self.expected_seq
         
         # Calculate buffer usage and manage flow control state (Hysteresis)
         buffer_used = len(self.ooo_buffer)

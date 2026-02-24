@@ -108,12 +108,16 @@ class RUDPSender:
         Pipelining bounded by congestion window (cwnd) in bytes.
         """
         while self.send_buffer:
+            next_len = len(self.send_buffer[0].payload)
+            if self.inflight_bytes + next_len > self.cwnd:
+                break
+                
             # Day 9: Effective Window Enforcement (consistent units: segments)
-            cwnd_segments = int(self.cwnd // MSS)
+            cwnd_segments = max(1, int(self.cwnd // MSS))
             self.effective_window = min(cwnd_segments, self.peer_rwnd)
             
-            # (next_seq - base) is the count of currently in-flight segments
-            if (self.next_seq - self.base) >= self.effective_window:
+            # Count of currently in-flight segments is len(self.unacked_packets)
+            if len(self.unacked_packets) >= self.effective_window:
                 break
                 
             packet = self.send_buffer.popleft()
@@ -127,6 +131,7 @@ class RUDPSender:
             self.inflight_bytes += len(packet.payload)
             
             try:
+                logger.debug(f"Sending packet seq={packet.seq_num}, inflight={self.inflight_bytes}, cwnd={self.cwnd}")
                 self.send_callback(packet.pack())
                 logger.debug(f"SENDER: Sent seq={packet.seq_num}, effective_window={self.effective_window}, "
                              f"cwnd_seg={cwnd_segments}, peer_rwnd={self.peer_rwnd}")

@@ -16,8 +16,6 @@ from common.app_envelope import decode_header, encode_message, HEADER_SIZE
 from common.constants import AGENT_SERVER_PORT, LOOPBACK_IP, MAX_PAYLOAD_LEN
 
 # Configuration
-BASIC_LOG_FORMAT = "[TCP-Client] %(asctime)s - %(levelname)s - %(message)s"
-logging.basicConfig(level=logging.INFO, format=BASIC_LOG_FORMAT)
 logger = logging.getLogger("TCPClient")
 
 # Day 1 Opcodes (Local Placeholders)

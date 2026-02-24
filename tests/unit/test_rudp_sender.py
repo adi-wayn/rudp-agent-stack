@@ -24,7 +24,7 @@ class TestRUDPSender(unittest.TestCase):
         self.assertEqual(len(self.sender.unacked_packets), 1)
         
         # ACK seq 0
-        self.sender.on_ack_received(1, self.current_time)
+        self.sender.on_ack_received(1, 64, self.current_time)
         # cwnd is now 2 MSS, it should send the next 2 packets (remaining)
         self.assertEqual(len(self.sent_bytes), 3)
         
@@ -46,13 +46,13 @@ class TestRUDPSender(unittest.TestCase):
         self.assertEqual(len(self.sent_bytes), 1)
         
         # ACK 1 (seq 0) -> cwnd = 2 MSS. sends seq 1, 2
-        self.sender.on_ack_received(1, self.current_time)
+        self.sender.on_ack_received(1, 64, self.current_time)
         self.assertEqual(len(self.sent_bytes), 3)
         self.assertEqual(self.sender.cwnd, 2.0 * MSS)
         self.assertEqual(self.sender.cc_state, CCState.CC_SLOW_START)
         
         # ACK 2 (seq 1) -> cwnd = 3 MSS. sends seq 3, 4
-        self.sender.on_ack_received(2, self.current_time)
+        self.sender.on_ack_received(2, 64, self.current_time)
         self.assertEqual(len(self.sent_bytes), 5)
         self.assertEqual(self.sender.cwnd, 3.0 * MSS)
         self.assertEqual(self.sender.cc_state, CCState.CC_SLOW_START)
@@ -64,22 +64,22 @@ class TestRUDPSender(unittest.TestCase):
         
         # Advance cwnd to 5 MSS so we can have enough inflight packets
         # seq 0 sent initially
-        self.sender.on_ack_received(1, self.current_time) # cwnd 2, sends seq 1, 2
-        self.sender.on_ack_received(2, self.current_time) # cwnd 3, sends seq 3, 4
-        self.sender.on_ack_received(3, self.current_time) # cwnd 4, sends seq 5, 6
-        self.sender.on_ack_received(4, self.current_time) # cwnd 5, sends seq 7, 8
+        self.sender.on_ack_received(1, 64, self.current_time) # cwnd 2, sends seq 1, 2
+        self.sender.on_ack_received(2, 64, self.current_time) # cwnd 3, sends seq 3, 4
+        self.sender.on_ack_received(3, 64, self.current_time) # cwnd 4, sends seq 5, 6
+        self.sender.on_ack_received(4, 64, self.current_time) # cwnd 5, sends seq 7, 8
         self.assertEqual(len(self.sent_bytes), 9) # up to seq 8 sent
         
         self.sent_bytes.clear() # Reset sent list for visibility
         
         # Now seq 4 is lost. Receives 5, 6, 7 natively. 
         # Receiver sends ACK 4 (three times dup)
-        self.sender.on_ack_received(4, self.current_time) # dup 1
-        self.sender.on_ack_received(4, self.current_time) # dup 2
+        self.sender.on_ack_received(4, 64, self.current_time) # dup 1
+        self.sender.on_ack_received(4, 64, self.current_time) # dup 2
         self.assertEqual(self.sender.cc_state, CCState.CC_SLOW_START)
         self.assertEqual(len(self.sent_bytes), 0) # No resend yet
         
-        self.sender.on_ack_received(4, self.current_time) # dup 3 -> Fast Retransmit!
+        self.sender.on_ack_received(4, 64, self.current_time) # dup 3 -> Fast Retransmit!
         
         self.assertEqual(self.sender.cc_state, CCState.CC_FAST_RECOVERY)
         self.assertEqual(self.sender.dup_ack_count, 3)
@@ -90,7 +90,7 @@ class TestRUDPSender(unittest.TestCase):
         self.assertEqual(p_retransmit.seq_num, 4)
         
         # Test Recovery deflation: If new ACK acknowledges recovery, deflates to ssthresh and sets Avoidance.
-        self.sender.on_ack_received(8, self.current_time) # Cumulative ACK for recovered
+        self.sender.on_ack_received(8, 64, self.current_time) # Cumulative ACK for recovered
         self.assertEqual(self.sender.cc_state, CCState.CC_AVOIDANCE)
         self.assertEqual(self.sender.cwnd, float(self.sender.ssthresh))
 
@@ -137,7 +137,7 @@ class TestRUDPSender(unittest.TestCase):
         
         # Test 1: First RTT Sample is measured directly
         self.current_time += 0.200 # +200ms RTT
-        self.sender.on_ack_received(1, self.current_time)
+        self.sender.on_ack_received(1, 64, self.current_time)
         
         self.assertAlmostEqual(self.sender.srtt, 0.200)
         self.assertAlmostEqual(self.sender.rttvar, 0.100)
@@ -151,7 +151,7 @@ class TestRUDPSender(unittest.TestCase):
         
         # Test 2: Second RTT Sample (EWMA logic) - suppose network speeds up
         self.current_time += 0.100 # + 100ms RTT
-        self.sender.on_ack_received(2, self.current_time)
+        self.sender.on_ack_received(2, 64, self.current_time)
         
         # Expected Math:
         # rttvar = (1-0.25)*0.100 + 0.25*abs(0.200 - 0.100) = 0.075 + 0.025 = 0.100
@@ -176,7 +176,7 @@ class TestRUDPSender(unittest.TestCase):
         # Verify the "is_retransmitted" flag triggered Karn's algorithm
         # Send an ACK for this specific packet and verify SRTT/RTTVAR DO NOT CHANGE
         self.current_time += 0.500
-        self.sender.on_ack_received(3, self.current_time)
+        self.sender.on_ack_received(3, 64, self.current_time)
         
         self.assertAlmostEqual(self.sender.rttvar, 0.100) # Unchanged from previous!
         self.assertAlmostEqual(self.sender.srtt, 0.1875) # Unchanged from previous!

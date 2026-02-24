@@ -36,9 +36,6 @@ class RUDPClientTransport:
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
         self.socket.connect((self.server_host, self.server_port))
         
-        # Enforce tick-rate timeout
-        self.socket.settimeout(self.SOCKET_POLL_TIMEOUT)
-        
         self._running = False
         self._receive_thread: Optional[threading.Thread] = None
         
@@ -78,6 +75,10 @@ class RUDPClientTransport:
             return
             
         self._running = True
+        
+        # Enforce explicitly here before loop
+        self.socket.settimeout(self.SOCKET_POLL_TIMEOUT)
+        
         self._receive_thread = threading.Thread(
             target=self._receive_loop,
             name="RUDPClient-ReceiveLoop",
