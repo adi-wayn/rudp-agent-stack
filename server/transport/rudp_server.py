@@ -153,7 +153,7 @@ class RUDPServerTransport:
         conn.last_seen = current_time
 
         if packet.is_ack:
-            conn.sender.on_ack_received(packet.ack_num, current_time)
+            conn.sender.on_ack_received(packet.ack_num, packet.rwnd, current_time)
             
         if packet.has_data:
             ack_num, rwnd, flags = conn.receiver.process_segment(packet)

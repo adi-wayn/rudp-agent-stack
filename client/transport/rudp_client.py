@@ -159,7 +159,7 @@ class RUDPClientTransport:
         """
         if packet.is_ack:
             # Route to sender to clear unacked buffers
-            self.sender.on_ack_received(packet.ack_num, current_time)
+            self.sender.on_ack_received(packet.ack_num, packet.rwnd, current_time)
             
         if packet.has_data:
             # Route to receiver to process payload

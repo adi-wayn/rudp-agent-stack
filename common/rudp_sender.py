@@ -48,6 +48,10 @@ class RUDPSender:
         self.last_ack_received = 0
         self.inflight_bytes = 0
         
+        # Day 9 Flow Control: Peer's advertised window (in segments)
+        self.peer_rwnd = window_size
+        self.effective_window = 0  # segments
+        
         # Dynamic RTO State (Jacobson/Karels)
         from common.constants import MAX_RTO
         self.srtt = None
@@ -104,9 +108,12 @@ class RUDPSender:
         Pipelining bounded by congestion window (cwnd) in bytes.
         """
         while self.send_buffer:
-            next_packet = self.send_buffer[0]
-            next_len = len(next_packet.payload)
-            if self.inflight_bytes + next_len > self.cwnd:
+            # Day 9: Effective Window Enforcement (consistent units: segments)
+            cwnd_segments = int(self.cwnd // MSS)
+            self.effective_window = min(cwnd_segments, self.peer_rwnd)
+            
+            # (next_seq - base) is the count of currently in-flight segments
+            if (self.next_seq - self.base) >= self.effective_window:
                 break
                 
             packet = self.send_buffer.popleft()
@@ -121,18 +128,24 @@ class RUDPSender:
             
             try:
                 self.send_callback(packet.pack())
+                logger.debug(f"SENDER: Sent seq={packet.seq_num}, effective_window={self.effective_window}, "
+                             f"cwnd_seg={cwnd_segments}, peer_rwnd={self.peer_rwnd}")
             except Exception as e:
                 logger.error("Failed to send packet seq=%d: %s", packet.seq_num, e)
 
-    def on_ack_received(self, ack_num: int, current_time: float) -> None:
+    def on_ack_received(self, ack_num: int, rwnd: int, current_time: float) -> None:
         """
-        Processes an incoming ACK number. 
+        Processes an incoming ACK number and advertised window. 
         Uses Cumulative ACK logic to clear the inflight buffer.
         
         Args:
             ack_num: The acknowledged sequence number.
+            rwnd: The receiver's advertised window (in segments).
             current_time: The current timestamp in seconds.
         """
+        # Update advertised window from peer
+        self.peer_rwnd = rwnd
+        
         if ack_num > self.base:
             # New ACK
             self.base = ack_num
