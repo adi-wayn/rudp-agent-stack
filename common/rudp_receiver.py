@@ -4,17 +4,23 @@ Handles packet ordering and acknowledgments.
 """
 
 import logging
+import math
+from enum import Enum
 from typing import Dict, List, Optional, Tuple, Callable
 from common.rudp_packet import RUDPPacket, FLAG_ACK, ChecksumError
-from common.constants import MAX_RWND
+from common.constants import MAX_RWND,HIGH_WATERMARK,LOW_WATERMARK
 
 logger = logging.getLogger(__name__)
 
+class FCState(Enum):
+    NORMAL = 1
+    THROTTLE = 2
+
 class RUDPReceiver:
     """
-    RUDP Receiver Logic (Day 8).
+    RUDP Receiver Logic (Day 8 & 9).
     Handles out-of-order buffering, cumulative acknowledgments, 
-    and duplicate ACK generation per peer.
+    and advertised window (rwnd) flow control with watermarks.
     """
     def __init__(self, deliver_callback: Callable[[bytes], None]):
         """
@@ -25,13 +31,20 @@ class RUDPReceiver:
         self.ooo_buffer: Dict[int, bytes] = {}  # seq -> payload
         self.deliver_callback = deliver_callback
         
+        # Day 9 Flow Control State
+        self.fc_state = FCState.NORMAL
+        self.high_threshold = math.ceil(HIGH_WATERMARK * MAX_RWND)  
+        self.low_threshold = math.ceil(LOW_WATERMARK * MAX_RWND)   
+        
         # Stats for observability
         self.stats = {
             "delivered": 0,
             "buffered": 0,
             "dup": 0,
             "drop": 0,
-            "drop_invalid": 0
+            "drop_invalid": 0,
+            "fc_throttle": 0,
+            "fc_normal": 0
         }
 
     def process_segment(self, segment: RUDPPacket) -> Tuple[int, int, int]:
@@ -90,12 +103,27 @@ class RUDPReceiver:
                     self.stats["buffered"] += 1
                 # If already in buffer, we don't double count, just ACK again
 
-        # 5. Cumulative ACK & rwnd Advertisement
+        # 5. Cumulative ACK & rwnd Advertisement (Day 9)
         ack_num = self.expected_seq - 1
-        rwnd = max(0, MAX_RWND - len(self.ooo_buffer))
+        
+        # Calculate buffer usage and manage flow control state (Hysteresis)
+        buffer_used = len(self.ooo_buffer)
+        
+        if self.fc_state == FCState.NORMAL and buffer_used >= self.high_threshold:
+            self.fc_state = FCState.THROTTLE
+            self.stats["fc_throttle"] += 1
+            logger.info(f"FC_STATE: NORMAL -> THROTTLE (buffer_used={buffer_used})")
+        elif self.fc_state == FCState.THROTTLE and buffer_used <= self.low_threshold:
+            self.fc_state = FCState.NORMAL
+            self.stats["fc_normal"] += 1
+            logger.info(f"FC_STATE: THROTTLE -> NORMAL (buffer_used={buffer_used})")
+            
+        # Per Spec: rwnd = MAX_RWND - buffer_used
+        # Ensure it doesn't go negative, though theoretically capped by window checks
+        rwnd = max(0, MAX_RWND - buffer_used)
         
         logger.debug(f"RECEIVER: seq={seq}, expected={self.expected_seq}, action={action}, "
-                     f"ack_sent={ack_num}, rwnd_sent={rwnd}")
+                     f"ack_sent={ack_num}, rwnd_sent={rwnd}, fc_state={self.fc_state.name}")
         
         return ack_num, rwnd, FLAG_ACK
 
