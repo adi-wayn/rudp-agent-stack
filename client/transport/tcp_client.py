@@ -16,8 +16,6 @@ from common.app_envelope import decode_header, encode_message, HEADER_SIZE
 from common.constants import AGENT_SERVER_PORT, LOOPBACK_IP, MAX_PAYLOAD_LEN
 
 # Configuration
-BASIC_LOG_FORMAT = "[TCP-Client] %(asctime)s - %(levelname)s - %(message)s"
-logging.basicConfig(level=logging.INFO, format=BASIC_LOG_FORMAT)
 logger = logging.getLogger("TCPClient")
 
 # Day 1 Opcodes (Local Placeholders)
@@ -28,8 +26,11 @@ class TCPClient:
     """
     Reusable TCP Client Wrapper.
     """
-    def __init__(self, server_ip: str = LOOPBACK_IP, server_port: int = AGENT_SERVER_PORT):
+    is_async = False
+
+    def __init__(self, server_ip: str = LOOPBACK_IP, server_port: int = AGENT_SERVER_PORT, client_ip: str = "NOT_SET"):
         self.server_addr = (server_ip, server_port)
+        self.client_ip = client_ip
         self.sock: Optional[socket.socket] = None
 
     def connect(self, timeout: float = 5.0):
@@ -38,7 +39,11 @@ class TCPClient:
         """
         logger.info(f"Connecting to {self.server_addr}...")
         try:
-            self.sock = socket.create_connection(self.server_addr, timeout=timeout)
+            if self.client_ip != "NOT_SET":
+                logger.info(f"Binding to source address {self.client_ip}:0")
+                self.sock = socket.create_connection(self.server_addr, timeout=timeout, source_address=(self.client_ip, 0))
+            else:
+                self.sock = socket.create_connection(self.server_addr, timeout=timeout)
             logger.info("Connected.")
         except socket.error as e:
             logger.error(f"Failed to connect: {e}")
@@ -54,6 +59,12 @@ class TCPClient:
             self.sock.sendall(data)
         except socket.error as e:
             raise ConnectionError(f"Socket error during send: {e}") from e
+
+    def send(self, data: bytes, request_id: int = 0) -> None:
+        """
+        Polymorphic interface matching RUDP for generic send().
+        """
+        self.send_bytes(data)
 
     def receive_exact(self, nbytes: int) -> bytes:
         """

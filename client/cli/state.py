@@ -1,5 +1,5 @@
 import dataclasses
-from typing import Optional
+from typing import Optional, Any
 from client.agent_client import AgentClient
 
 DEFAULT_DOWNLOAD_DIR = "./downloads"
@@ -18,6 +18,7 @@ class SessionState:
     
     # State
     download_dir: str = DEFAULT_DOWNLOAD_DIR
+    failure_engine: Optional[Any] = None
     
     # Replay State
     last_action_name: Optional[str] = None
