@@ -23,6 +23,6 @@ class TransportFactory:
             # RUDP wrapper or socket
             BASIC_LOG_FORMAT = "[RUDP-Client] %(asctime)s - %(levelname)s - %(message)s"
             logging.basicConfig(level=logging.INFO, format=BASIC_LOG_FORMAT)
-            return RUDPClientTransport(server_ip, server_port)
+            return RUDPClientTransport(server_ip, server_port, failure_engine=kwargs.get("failure_engine"))
         else:
             raise ValueError(f"Unknown transport mode: {mode}")

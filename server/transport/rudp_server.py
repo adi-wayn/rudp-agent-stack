@@ -44,12 +44,13 @@ class RUDPServerTransport:
     """
     SOCKET_POLL_TIMEOUT = 0.05
 
-    def __init__(self, port: int = AGENT_SERVER_PORT, bind_ip: str = LOOPBACK_IP):
+    def __init__(self, port: int = AGENT_SERVER_PORT, bind_ip: str = LOOPBACK_IP, failure_engine=None):
         self.server_addr = (bind_ip, port)
         self.sock: Optional[socket.socket] = None
         self.connections: Dict[Tuple[str, int], RUDPConnection] = {}
         self.running = False
         self._app_message_handler: Optional[Callable[[bytes, Tuple[str, int]], None]] = None
+        self.failure_engine = failure_engine
 
     def set_message_handler(self, handler: Callable[[bytes, Tuple[str, int]], None]) -> None:
         """
@@ -127,7 +128,11 @@ class RUDPServerTransport:
                 time.sleep(self.SOCKET_POLL_TIMEOUT)
                 
             if data and addr:
-                self._handle_datagram(data, addr, current_time)
+                if self.failure_engine and self.failure_engine.should_drop_inbound():
+                    # Silently discard the packet to simulate network loss
+                    pass
+                else:
+                    self._handle_datagram(data, addr, current_time)
                 
             # Broadcast the global timeout tick to all isolated sender connections
             self._tick_connections(time.time())
@@ -186,7 +191,10 @@ class RUDPServerTransport:
             return
         
         try:
-            self.sock.sendto(data, addr)
+            if self.failure_engine:
+                self.failure_engine.apply_outbound(data, self.sock.sendto, addr)
+            else:
+                self.sock.sendto(data, addr)
         except Exception as e:
             if self.running:
                 logger.error(f"Transport failed to send to {addr}: {e}")

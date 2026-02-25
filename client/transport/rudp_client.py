@@ -24,13 +24,14 @@ class RUDPClientTransport:
     SOCKET_POLL_TIMEOUT = 0.05
     is_async = True
 
-    def __init__(self, server_host: str, server_port: int) -> None:
+    def __init__(self, server_host: str, server_port: int, failure_engine=None) -> None:
         """
         Initializes the client transport, sets up the socket, and instantiates
         the Sender and Receiver engines.
         """
         self.server_host = server_host
         self.server_port = server_port
+        self.failure_engine = failure_engine
         
         # Create and bind UDP socket
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
@@ -109,7 +110,10 @@ class RUDPClientTransport:
         Serializes and transmits raw bytes (an encoded payload or ACK) to the connected endpoint.
         """
         try:
-            self.socket.send(packet)
+            if self.failure_engine:
+                self.failure_engine.apply_outbound(packet, self.socket.send)
+            else:
+                self.socket.send(packet)
         except OSError as e:
             if not self._running:
                 return
@@ -142,11 +146,15 @@ class RUDPClientTransport:
                 
             # If we successfully read data, parse and route it
             if data:
-                try:
-                    packet = RUDPPacket.unpack(data)
-                    self.on_packet_received(packet, current_time)
-                except (ValueError, ChecksumError) as parse_error:
-                    logger.warning(f"Corrupted packet received, dropping... Details: {parse_error}")
+                if self.failure_engine and self.failure_engine.should_drop_inbound():
+                    # Silently discard the packet to simulate loss (pre-parsing)
+                    pass
+                else:
+                    try:
+                        packet = RUDPPacket.unpack(data)
+                        self.on_packet_received(packet, current_time)
+                    except (ValueError, ChecksumError) as parse_error:
+                        logger.warning(f"Corrupted packet received, dropping... Details: {parse_error}")
 
             # Tick-based retransmission engine evaluation at the end of EVERY loop iteration
             try:
