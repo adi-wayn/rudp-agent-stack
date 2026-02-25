@@ -28,8 +28,9 @@ class TCPClient:
     """
     is_async = False
 
-    def __init__(self, server_ip: str = LOOPBACK_IP, server_port: int = AGENT_SERVER_PORT):
+    def __init__(self, server_ip: str = LOOPBACK_IP, server_port: int = AGENT_SERVER_PORT, client_ip: str = "NOT_SET"):
         self.server_addr = (server_ip, server_port)
+        self.client_ip = client_ip
         self.sock: Optional[socket.socket] = None
 
     def connect(self, timeout: float = 5.0):
@@ -38,7 +39,11 @@ class TCPClient:
         """
         logger.info(f"Connecting to {self.server_addr}...")
         try:
-            self.sock = socket.create_connection(self.server_addr, timeout=timeout)
+            if self.client_ip != "NOT_SET":
+                logger.info(f"Binding to source address {self.client_ip}:0")
+                self.sock = socket.create_connection(self.server_addr, timeout=timeout, source_address=(self.client_ip, 0))
+            else:
+                self.sock = socket.create_connection(self.server_addr, timeout=timeout)
             logger.info("Connected.")
         except socket.error as e:
             logger.error(f"Failed to connect: {e}")

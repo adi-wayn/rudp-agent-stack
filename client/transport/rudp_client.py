@@ -24,17 +24,22 @@ class RUDPClientTransport:
     SOCKET_POLL_TIMEOUT = 0.05
     is_async = True
 
-    def __init__(self, server_host: str, server_port: int, failure_engine=None) -> None:
+    def __init__(self, server_host: str, server_port: int, client_ip: str = "NOT_SET", failure_engine=None) -> None:
         """
         Initializes the client transport, sets up the socket, and instantiates
         the Sender and Receiver engines.
         """
         self.server_host = server_host
         self.server_port = server_port
+        self.client_ip = client_ip
         self.failure_engine = failure_engine
         
         # Create and bind UDP socket
         self.socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
+        if self.client_ip != "NOT_SET":
+            logger.info(f"Binding UDP socket to {self.client_ip}:0")
+            self.socket.bind((self.client_ip, 0))
+            
         self.socket.connect((self.server_host, self.server_port))
         
         self._running = False
