@@ -8,8 +8,9 @@ from client.cli.ui import preview_content
 
 class InteractiveCLI:
     """Main CLI Controller orchestrating the modular actions."""
-    def __init__(self):
+    def __init__(self, failure_engine=None):
         self.state = SessionState()
+        self.state.failure_engine = failure_engine
         self.running = True
         
         if not os.path.exists(self.state.download_dir):

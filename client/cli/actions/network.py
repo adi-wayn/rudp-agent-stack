@@ -49,7 +49,8 @@ def action_connect(state):
         transport = TransportFactory.create(
             state.transport_mode, 
             state.server_ip, 
-            state.server_port
+            state.server_port,
+            failure_engine=state.failure_engine
         )
         state.agent_client = AgentClient(transport)
         state.agent_client.transport.connect(timeout=INITIAL_RTO)
