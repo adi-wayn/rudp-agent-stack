@@ -35,18 +35,19 @@ def action_dhcp(state):
          print(f"❌ DHCP Failed: Timeout or Server down? Details: {e}")
 
 def action_dns(state):
-    print("\n[DNS] Resolving 'app.server'...")
+    print("\n[DNS] Resolving 'agent.local'...")
     dns_ip = prompt_text("Enter DNS Server IP", default="127.0.0.1", required=True)
-    client = DNSClient(dns_ip)
+    
+    # Check if we have an assigned IP from DHCP to bind to. NOT_SET is handled gracefully by DNSClient.
+    client = DNSClient(dns_server_ip=dns_ip, client_ip=state.client_ip)
+    
     try:
-        resolved = client.resolve("app.server")
+        resolved = client.resolve("agent.local")
         if resolved:
             state.server_ip = resolved
-            print(f"✅ Resolved app.server -> {resolved}")
+            print(f"✅ Resolved agent.local -> {resolved}")
         else:
             print("❌ DNS Resolution failed.")
-    except NotImplementedError:
-         print("⚠️  DNS Not Implemented yet.")
     except Exception as e:
          print(f"❌ DNS Failed: {e}")
 
