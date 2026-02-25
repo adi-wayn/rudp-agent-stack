@@ -1,5 +1,5 @@
 import dataclasses
-from typing import Optional
+from typing import Optional, Any
 from client.agent_client import AgentClient
 
 DEFAULT_DOWNLOAD_DIR = "./downloads"
