@@ -2,6 +2,7 @@ import json
 import logging
 from typing import Tuple
 from common.constants import LOOPBACK_IP
+from common.http_packet import HTTPBuilder
 from server.transport.rudp_server import RUDPServerTransport
 from server.dns.dns_cache import DNSCache
 
@@ -30,51 +31,28 @@ class DoHRUDPServer:
             logger.warning(f"Received non-UTF-8 payload from {client_addr}")
             return
             
-        lines = http_request.split('\r\n')
-        if not lines:
-            return
+        name = HTTPBuilder.parse_request(http_request)
+        if name:
+            logger.info(f"DoH Query for '{name}' from {client_addr}")
             
-        # Example Request Line: GET /dns-query?name=agent.local HTTP/1.1
-        request_line = lines[0]
-        parts = request_line.split(' ')
-        if len(parts) >= 2 and parts[0] == 'GET':
-            url = parts[1]
-            if url.startswith('/dns-query?name='):
-                name = url.split('=')[1].split(' ')[0] # Ensure we don't catch protocol trailing string if there's no space formatting edge-cases
-                logger.info(f"DoH Query for '{name}' from {client_addr}")
-                
-                # Query our cache
-                ip = self.cache.get(name)
-                
-                if ip:
-                    # 200 OK
-                    response_body = json.dumps({
-                        "status": 200,
-                        "data": {
-                            "ip": ip,
-                            "ttl": 300
-                        }
-                    })
-                    response = (
-                        "HTTP/1.1 200 OK\r\n"
-                        "Content-Type: application/json\r\n"
-                        f"Content-Length: {len(response_body)}\r\n"
-                        "\r\n"
-                        f"{response_body}"
-                    )
-                else:
-                    # 404 Not Found
-                    response_body = json.dumps({"status": 404, "error": "Not Found"})
-                    response = (
-                        "HTTP/1.1 404 Not Found\r\n"
-                        "Content-Type: application/json\r\n"
-                        f"Content-Length: {len(response_body)}\r\n"
-                        "\r\n"
-                        f"{response_body}"
-                    )
-                
-                # Provide request_id=0 as RUDP client multiplexing does not use it at the L4 abstraction level
-                self.transport.send(response.encode('utf-8'), request_id=0, client_addr=client_addr)
+            # Query our cache
+            ip = self.cache.get(name)
+            
+            if ip:
+                # 200 OK
+                response = HTTPBuilder.build_json_response(200, {
+                    "status": 200,
+                    "data": {
+                        "ip": ip,
+                        "ttl": 300
+                    }
+                })
+            else:
+                # 404 Not Found
+                response = HTTPBuilder.build_json_response(404, {"status": 404, "error": "Not Found"})
+            
+            # Provide request_id=0 as RUDP client multiplexing does not use it at the L4 abstraction level
+            self.transport.send(response.encode('utf-8'), request_id=0, client_addr=client_addr)
 
     def start(self):
         """

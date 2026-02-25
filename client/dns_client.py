@@ -3,6 +3,7 @@ import logging
 import threading
 from typing import Optional
 from client.transport.rudp_client import RUDPClientTransport
+from common.http_packet import HTTPBuilder
 
 logger = logging.getLogger(__name__)
 
@@ -45,11 +46,7 @@ class DNSClient:
             transport.start()
             
             # Format raw HTTP GET Request
-            request_str = (
-                f"GET /dns-query?name={hostname} HTTP/1.1\r\n"
-                f"Host: {self.dns_server_ip}:{self.port}\r\n"
-                "Accept: application/json\r\n\r\n"
-            )
+            request_str = HTTPBuilder.build_doh_request(hostname, self.dns_server_ip, self.port)
             
             # Send serialized text over RUDP using arbitrary request_id=1 for multiplexer compat
             logger.info(f"Sending DoH request for '{hostname}' to {self.dns_server_ip}:{self.port} via RUDP")
@@ -59,19 +56,14 @@ class DNSClient:
             if response_event.wait(timeout=5.0):
                 payload = response_buffer[0].decode('utf-8')
                 
-                # Simple HTTP Parsing: Split headers from body
-                if "\r\n\r\n" in payload:
-                    body = payload.split("\r\n\r\n", 1)[1]
-                    try:
-                        data = json.loads(body)
-                        if data.get("status") == 200:
-                            resolved_ip = data.get("data", {}).get("ip")
-                        else:
-                            logger.error(f"DNS Server returned error: {data}")
-                    except json.JSONDecodeError:
-                        logger.error("Failed to decode JSON from DoH response")
+                data = HTTPBuilder.parse_response(payload)
+                if data:
+                    if data.get("status") == 200:
+                        resolved_ip = data.get("data", {}).get("ip")
+                    else:
+                        logger.error(f"DNS Server returned error: {data}")
                 else:
-                    logger.error("Malformed HTTP response received over RUDP")
+                    logger.error("Failed to parse HTTP/JSON DoH response from RUDP payload")
             else:
                 logger.error("DoH request timed out")
                 
