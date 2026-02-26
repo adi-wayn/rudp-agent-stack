@@ -192,17 +192,26 @@ class ToolDispatcher:
         with open(safe_path, 'r', encoding='utf-8') as f:
             return f.read()
 
-    def _tool_stream_read(self, args: Dict) -> Generator[str, None, None]:
+    def _tool_stream_read(self, args: Dict) -> Generator[Union[str, bytes], None, None]:
         path = args['path']
+        binary = args.get('binary', False)
         safe_path = self.policy_guard.validate_path(path)
         
-        # Return a generator that yields lines
-        # We must be careful about keeping file open?
-        # A generator keeps the stack frame.
         def file_yielder():
-            with open(safe_path, 'r', encoding='utf-8') as f:
-                for line in f:
-                    yield line
+            mode = 'rb' if binary else 'r'
+            kwargs = {} if binary else {'encoding': 'utf-8'}
+            # Handle unicode decode errors gracefully if someone opens a binary as text
+            if not binary: kwargs['errors'] = 'replace'
+            with open(safe_path, mode, **kwargs) as f:
+                if binary:
+                    while True:
+                        chunk = f.read(65536)
+                        if not chunk:
+                            break
+                        yield chunk
+                else:
+                    for line in f:
+                        yield line
         return file_yielder()
 
     def _tool_search_lines(self, args: Dict, input_data: Any) -> list:

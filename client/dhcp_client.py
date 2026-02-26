@@ -30,12 +30,16 @@ class DHCPClient:
     REQUESTING = "REQUESTING"
     BOUND = "BOUND"
 
-    def __init__(self, mac_address: str):
+    def __init__(self, mac_address: str, server_port: int = DHCP_SERVER_PORT, client_port: int = DHCP_CLIENT_PORT):
         """
         Initialize DHCP client.
         :param mac_address: Unique hardware identifier for the client.
+        :param server_port: Port of the DHCPServer (default 67)
+        :param client_port: Port to bind to (default 68)
         """
         self.mac_address = mac_address
+        self.server_port = server_port
+        self.client_port = client_port
         self.state = self.INIT
         
         # Lease Metadata
@@ -62,11 +66,11 @@ class DHCPClient:
         self.sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
         
         try:
-            # Bind to all interfaces on port 68
-            self.sock.bind(("", DHCP_CLIENT_PORT))
-            logger.debug(f"Socket bound to port {DHCP_CLIENT_PORT}")
+            # Bind to all interfaces on configured client port
+            self.sock.bind(("", self.client_port))
+            logger.debug(f"Socket bound to port {self.client_port}")
         except PermissionError:
-            logger.warning(f"Could not bind to port {DHCP_CLIENT_PORT}. Falling back to ephemeral port.")
+            logger.warning(f"Could not bind to port {self.client_port}. Falling back to ephemeral port.")
             self.sock.bind(("", 0))
 
     def _send_packet(self, packet: DHCPPacket, dest_ip: str = "255.255.255.255") -> None:
@@ -75,8 +79,8 @@ class DHCPClient:
             raise RuntimeError("Socket not initialized")
             
         data = packet.to_bytes()
-        self.sock.sendto(data, (dest_ip, DHCP_SERVER_PORT))
-        logger.debug(f"Sent {packet.message_type} (XID: {packet.xid}) to {dest_ip}:{DHCP_SERVER_PORT}")
+        self.sock.sendto(data, (dest_ip, self.server_port))
+        logger.debug(f"Sent {packet.message_type} (XID: {packet.xid}) to {dest_ip}:{self.server_port}")
 
     def _receive_packet(self, timeout: float) -> Optional[DHCPPacket]:
         """Wait for a DHCP packet within the timeout."""
