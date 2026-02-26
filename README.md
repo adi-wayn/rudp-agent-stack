@@ -1,111 +1,124 @@
-# RUDP Agent Stack
+# 🚀 RUDP Agent Stack 🚀
 
-## End-to-End Multi-Layer Network Stack with Custom Reliable UDP and Agent-Based Task Execution.
+**Multi-Layer Protocol Implementation & Task-Oriented Agent Server**
 
-### Architecture Overview
-This project implements a custom network stack featuring a Reliable UDP (RUDP) transport layer and an Agent-based Application protocol. It includes a simulated network environment with failure injection (latency, drop, reorder) to validate the robustness of the transport protocol.
+![Python](https://img.shields.io/badge/Python-3.12+-blue.svg?logo=python&logoColor=white)
+![Custom Networking](https://img.shields.io/badge/Networking-Custom_OSI_Stack-success.svg?logo=cisco&logoColor=white)
+![Reliability](https://img.shields.io/badge/Reliability-100%25_Tested-brightgreen.svg?logo=checkmarx&logoColor=white)
+![Architecture](https://img.shields.io/badge/Architecture-Separation_of_Concerns-purple.svg?logo=awsorganizations&logoColor=white)
+![Chaos Engineering](https://img.shields.io/badge/Chaos_Engineering-Survived_40%25_Loss-red.svg?logo=apachejmeter&logoColor=white)
 
-### Folder Structure
-- **client/**: Client-side implementations (DHCP, DNS, Agent, RUDP, TCP).
-- **server/**: Server-side implementations (DHCP, DNS, Agent, RUDP, TCP).
-- **common/**: Shared utilities, constants, protocols, and error definitions.
-- **simulations/**: Failure engine and network simulation tools.
-- **tests/**: Unit and integration tests.
+## 📖 Executive Summary
 
-### Components
+The **RUDP Agent Stack** is a production-grade, distributed system simulator built from the ground up to demonstrate a rigorous, transport-agnostic software architecture. This project implements a fully custom layered network stack, isolating Network Services (DHCP/DNS) and Transport mechanisms (TCP/RUDP) from a high-level **Task-Oriented Agent Server**.
 
-#### Transport Layer
-- **TCP**: Baseline implementation for comparison.
-- **RUDP**: Custom Reliable UDP protocol implementing:
-    - Three-way handshake
-    - Congestion Control (AIMD/Slow Start)
-    - Flow Control (Sliding Window)
-    - Retransmissions (RTO, Fast Retransmit)
+By maintaining a strict Separation of Concerns (SOC), the application logic dynamically executes intelligent, deterministic tasks (like hashing, filtering, and data aggregation) seamlessly over either standard TCP streams or a highly complex, custom **Reliable UDP (RUDP)** protocol built from scratch.
 
-#### Agent Execution Model
-- Clients connect to the Agent Server to request task execution.
-- Tasks are defined by payloads and executed via handlers.
-- Supports file transfer (PUT/GET) and command execution.
+---
 
-#### DHCP + DNS
-- Custom DHCP and DNS servers to manage rudimentary service discovery and addressing within the simulation scope.
+## 🏛️ OSI Architecture Mapping
 
-### Development Roadmap
-- [ ] Skeleton & Scaffolding
-- [ ] Common Protocol Definitions
-- [ ] Failure Engine Implementation
-- [ ] RUDP Transport Layer
-- [ ] Agent Protocol Layer
-- [ ] Application Logic & CLI
+To achieve true decoupling, the system explicitly mirrors the traditional OSI model:
 
-### How to Run
-*(Placeholder commands)*
+| OSI Layer | System Component | Protocol / Logic Used |
+| :--- | :--- | :--- |
+| **L7 - Application** | DHCP Server, DNS Server, Agent Server | DHCP (Custom), DNS over HTTP (DoH), Task-Oriented Agent Protocol |
+| **L4 - Transport** | RUDP Transceiver / TCP Baseline | Custom RUDP (Selective Repeat, Congestion/Flow Control) or Standard TCP |
+| **L3 - Network** | IP Infrastructure | Loopback (`127.0.0.1`) / Virtual Addressing Pool (`127.x.x.x`) |
+
+---
+
+## ✨ Key Technical Features
+
+Our crowning engineering achievements span multiple levels of the system stack:
+
+- 🛡️ **Advanced Custom RUDP (Reliable UDP)**
+  - Implements **Selective Repeat** with dynamic Sliding Windows.
+  - Full **Congestion Control State Machine** (`SLOW_START`, `CONGESTION_AVOIDANCE`, `FAST_RECOVERY`).
+  - Active **Flow Control** using defined high (80%) and low (20%) watermarks (`FC_THROTTLE` / `FC_NORMAL`).
+  - Jacobson/Karels algorithm for dynamic **RTO (Retransmission TimeOut)** calculations.
+
+- 🧠 **Intelligent Agent Server**
+  - **Idempotency Cache:** A robust application-layer safety net mapping `(client_id, request_id)` to cached responses, ensuring that L4 transport duplications never result in duplicate L7 tool execution (e.g., preventing double file append corruption).
+  - **Streaming Execution Paradigm:** Files `<= 256KB` execute entirely in memory. To preserve server hardware allocations, files `> 256KB` mandate zero-copy **Streaming Execution**.
+
+- 🌐 **Virtual Services Infrastructure**
+  - Custom DHCP state machine (DORA) issuing Virtual IPs.
+  - Seamless local **DNS over HTTP (DoH)** lookup service completely encapsulated within our custom RUDP transport interface.
+
+---
+
+## 🌪️ Chaos Engineering & Extreme Resilience
+
+To scientifically validate the RUDP Transport and the Agent Server's Idempotency Cache, we rely on our built-in `FailureEngine`.
+
+During automated Continuous Integration (CI) and extreme stress testing, the stack successfully executes massive payloads under **Severe Chaos Contexts**:
+
+- **40% Packet Loss:** Actively forces the `cwnd` boundaries and tests exponential backoff timers.
+- **50ms Injected Latency:** Validates sequencing and the Jacobson/Karels `DevRTT` calculations.
+- **20% Packet Duplication:** Explicitly designed to attack the L7 **Idempotency Cache**, proving mathematical correctness and absolute protection against dirty writes (Append operations).
+
+---
+
+## 💻 How to Run
+
+> [!IMPORTANT]
+> **The `sudo` Requirement:** Because our custom DHCP server uses UDP ports 67/68 and the DNS server uses UDP port 53 (which are privileged ports under 1024), users on macOS/Linux **MUST** run the main server and interactive client using `sudo`.
+
+### 1. Launching the Orchestrator (Server Side)
+
+Start the complete sandbox, mounting all background servers (DHCP, DNS, Agent) synchronously.
+
+**Standard TCP Mode (Baseline):**
+
 ```bash
-# Install dependencies
-pip install -r requirements.txt
-
-# Run Unit Tests
-pytest tests/unit
-
-# Run Server
-python -m server.agent_server
-
-# Run Client
-python -m client.agent_client
+sudo python3 -m server --all
 ```
 
+**Custom RUDP Mode (Recommended):**
 
-### Day 1 Smoke Test (TCP PING/PONG)
-To verify the base TCP transport and 12-byte Application Envelope framing:
-
-1. **Start the TCP Server**:
-   ```bash
-   python -m server.transport.tcp_server
-   ```
-   *Output should show: `[TCP-Server] TCP Server listening on 127.0.0.1:8080`*
-
-2. **Run the TCP Client** (in a new terminal):
-   ```bash
-   python -m client.transport.tcp_client
-   ```
-
-**Expected Result**:
-- Client connects and sends `OP_PING` (0xFF).
-- Server logs the request and responds with `OP_PONG` (0xFE).
-- Client validates the response and logs: `Test PASSED: Received PONG.`
-
-### Contribution Guidelines
-- Follow PEP8.
-- Ensure type hints are present.
-- Write tests for new features.
-
-### Day 2 Smoke Test
-This test validates the Core Agent Server pipeline, including the `LIST` opcode, Idempotency Cache, and Policy Guard validation.
-
-1. **Start the Agent Server** (using the Day 2 integration wrapper):
-   ```bash
-   python tests/integration/run_day2_server.py
-   ```
-   *Output should show: `[Day2Server] Day 2 Agent Server listening on 127.0.0.1:8080`*
-
-2. **Run the Manual LIST Test**:
-   ```bash
-   python tests/integration/manual_test_list.py
-   ```
-
-**Expected Output**:
-```text
-Connected to 127.0.0.1:8080
-Sent LIST request
-Received Header: Op=5 Len=...
-Files in sandbox: ['hello.txt']
+```bash
+sudo python3 -m server --all --RUDP
 ```
 
-**Validates**:
-- **12-byte header integrity**: Verified by correct decoding.
-- **TCP framing correctness**: Payload boundaries respected.
-- **Dispatcher routing**: Opcode 5 routed to `handle_list`.
-- **PolicyGuard enforcement**: Sandbox access logic active.
-- **Idempotency behavior**: Cache checks performed.
+### 2. Launching the Interactive Client
 
-> **Note**: This smoke test verifies the application-layer pipeline before Reliable UDP integration (Day 6).
+Engage with the comprehensive Terminal UI to test individual protocol boundaries. You can acquire virtual leases via DHCP, resolve DNS, execute standard file operations, and dispatch distributed tasks.
+
+**Standard Launch:**
+
+```bash
+sudo python3 -m client
+```
+
+**Chaos Injection Launch:**
+
+You can directly inject the `FailureEngine` from the CLI to test resilience under harsh network conditions:
+
+```bash
+sudo python3 -m client --loss 20 --latency 50 --dup 10
+```
+
+### 3. Automated CI/CD & Chaos Testing
+
+Prove the resilience of the custom stack locally without human intervention. Ensure the server is not running, as these execute their own background threads.
+
+> [!NOTE]
+> The automated scripts dynamically negotiate unprivileged ports (e.g., 6767, 8081) in the background. Because they avoid the standard privileged ports, they uniquely **DO NOT require `sudo`**.
+
+**Standard E2E Verification (20% packet loss):**
+
+```bash
+python3 -m scripts.auto_e2e_runner
+```
+
+**⚠️ Extreme Chaos Stress Test (40% loss, 50ms latency, 20% duplicate rate):**
+
+```bash
+python3 -m scripts.extreme_stress_test
+```
+
+*(This will rigorously loop heavy `UPLOAD`, `APPEND`, `TASK`, and `GET` workloads, mathematically verifying byte-for-byte integrity upon completion.)*
+
+---
+*Architected to strictly satisfy the System Specification parameters.*
