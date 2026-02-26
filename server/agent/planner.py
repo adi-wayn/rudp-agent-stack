@@ -292,8 +292,8 @@ class Planner:
         # Step 1: Stream Read (always stream for hash to be efficient?)
         # Mode decision applies.
         
-        # For hashing, Streaming is always better.
-        read_step = Step(ToolName.STREAM_READ, {"path": target_file}, "file_stream")
+        # For hashing, Streaming is always better, and must be binary.
+        read_step = Step(ToolName.STREAM_READ, {"path": target_file, "binary": True}, "file_stream")
         
         hash_step = Step(
             ToolName.HASH_SHA256,

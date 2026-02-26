@@ -181,7 +181,7 @@ class AgentClient:
                     self.transport.send(full_message, final_req_id)
                     
                     # Generous wait. RUDP naturally handles its own micro-retries and timeouts.
-                    timeout_val = 15.0
+                    timeout_val = getattr(self, 'timeout', 15.0)
                     
                     if not event.wait(timeout=timeout_val):
                         self._pending_requests.pop(final_req_id, None)
