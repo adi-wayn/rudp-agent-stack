@@ -102,6 +102,8 @@ def handle_append(header: AppHeader, payload: bytes, policy_guard: PolicyGuard, 
         # Re-check size to be sure (or just use calc)
         final_size = os.path.getsize(abs_path)
         
+        logger.info(f"APPEND: Appended {data_len} bytes to {filename}. New size: {final_size}")
+        
         return {
             "filename": filename,
             "new_size": final_size

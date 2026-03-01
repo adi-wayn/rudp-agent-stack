@@ -67,7 +67,7 @@ class AgentServer:
                 client_id, header.request_id, header.opcode
             )
             if cached_response:
-                logger.info(f"Returning cached response for ReqID={header.request_id}")
+                logger.warning(f"Idempotency Cache HIT: Duplicate packet caught for Client={client_id}, ReqID={header.request_id}, Opcode={header.opcode}. Returning cached response.")
                 return cached_response
 
             # 3. Policy & Dispatch
@@ -79,6 +79,7 @@ class AgentServer:
                 client_id, header.request_id, header.opcode, response_bytes
             )
             
+            logger.info(f"Agent Request Completed: Client={client_id}, ReqID={header.request_id}, Opcode={header.opcode}. Returning {len(response_bytes)} bytes.")
             return response_bytes
 
         except ValueError as e:

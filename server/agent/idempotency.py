@@ -36,7 +36,7 @@ class IdempotencyCache:
         
         if entry:
             if time.time() - entry.timestamp < IDEMPOTENCY_TTL:
-                logger.info(f"Idempotency HIT for {key}")
+                logger.warning(f"Idempotency HIT for {key}")
                 return entry.response_data
             else:
                 # Expired

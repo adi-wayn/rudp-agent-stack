@@ -179,6 +179,8 @@ class Planner:
         plan_str = f"{opcode}-{json.dumps(payload, sort_keys=True)}-{execution_mode}-{output_policy}-{side_effects}"
         plan_id = hashlib.sha256(plan_str.encode()).hexdigest()[:16]
 
+        logger.info(f"Planner Decision: ReqID={request_id}, Mode={execution_mode.value}, OutputPolicy={output_policy.value}, SideEffects={side_effects}")
+
         return Plan(
             plan_id=plan_id,
             task_type=opcode,

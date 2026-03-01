@@ -40,6 +40,7 @@ class DoHRUDPServer:
             
             if ip:
                 # 200 OK
+                logger.info(f"DoH Query for '{name}' successfully resolved to {ip} from cache for {client_addr}")
                 response = HTTPBuilder.build_json_response(200, {
                     "status": 200,
                     "data": {
@@ -49,9 +50,11 @@ class DoHRUDPServer:
                 })
             else:
                 # 404 Not Found
+                logger.warning(f"DoH Query for '{name}' from {client_addr} not found in cache (404)")
                 response = HTTPBuilder.build_json_response(404, {"status": 404, "error": "Not Found"})
             
             # Provide request_id=0 as RUDP client multiplexing does not use it at the L4 abstraction level
+            logger.info(f"Dispatched DoH response back to {client_addr}")
             self.transport.send(response.encode('utf-8'), request_id=0, client_addr=client_addr)
 
     def start(self):

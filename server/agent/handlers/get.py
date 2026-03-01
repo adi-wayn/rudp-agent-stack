@@ -72,6 +72,8 @@ def handle_get(header: AppHeader, payload: bytes, policy_guard: PolicyGuard) -> 
         with open(abs_path, 'rb') as f:
             file_content = f.read()
             
+        logger.info(f"GET: Successfully read {file_size} bytes from {filename}")
+            
         # 6. Return Data
         return {
             "filename": filename,

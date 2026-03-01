@@ -159,12 +159,15 @@ class RUDPServerTransport:
         conn.last_seen = current_time
 
         if packet.is_ack:
+            logger.debug(f"RUDP [{addr}] ACK received: ack_num={packet.ack_num}, rwnd={packet.rwnd}")
             conn.sender.on_ack_received(packet.ack_num, packet.rwnd, current_time)
             
         if packet.has_data:
+            logger.debug(f"RUDP [{addr}] DATA received: seq_num={packet.seq_num}, len={len(packet.payload)}")
             ack_num, rwnd, flags = conn.receiver.process_segment(packet)
             
             # Immediately acknowledge the data chunk back to this client
+            logger.debug(f"RUDP [{addr}] Sending ACK: ack_num={ack_num}, rwnd={rwnd}")
             ack_packet = RUDPPacket(
                 seq_num=0,
                 ack_num=ack_num,

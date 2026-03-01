@@ -68,6 +68,8 @@ def handle_put_meta(header: AppHeader, payload: bytes, policy_guard: PolicyGuard
         # 4. Create Session
         upload_id = session_manager.create_session(filename, total_size)
         
+        logger.info(f"PUT_META: Created session {upload_id} for {filename} ({total_size} bytes)")
+        
         return {
             "upload_id": upload_id,
             "status": "ready"
@@ -115,6 +117,8 @@ def handle_put_chunk(header: AppHeader, payload: bytes, policy_guard: PolicyGuar
 
         # Apply Chunk
         is_complete, msg = session_manager.apply_chunk(upload_id, offset, chunk_data, file_writer)
+        
+        logger.info(f"PUT_CHUNK: Session={upload_id}, Offset={offset}, Wrote={chunk_len} bytes. Complete={is_complete}")
         
         return {
             "upload_id": upload_id,

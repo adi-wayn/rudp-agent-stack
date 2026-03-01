@@ -73,7 +73,7 @@ class DHCPServer:
             lease_time=lease_time
         )
         
-        logger.debug(f"Offering IP {offered_ip} to {packet.client_mac} for XID {packet.xid}")
+        logger.debug(f"DHCP: Offering IP {offered_ip} to {packet.client_mac} for XID {packet.xid}")
         self._send_packet(offer_packet)
 
     def _handle_request(self, packet: DHCPPacket):
@@ -94,7 +94,7 @@ class DHCPServer:
             
             # Formatted exactly per spec: 
             # logger.info(f"DHCP: XID={xid}, Allocated IP={ip}, Lease Expiry={expiry}")
-            logger.info(f"DHCP: XID={packet.xid}, Allocated IP={packet.offered_ip}, Lease Expiry={expiry_str}")
+            logger.info(f"DHCP: Lease granted. XID={packet.xid}, Allocated IP={packet.offered_ip}, Lease Expiry={expiry_str}")
             
             self._send_packet(ack_packet)
         else:
@@ -105,7 +105,7 @@ class DHCPServer:
                 offered_ip="",
                 lease_time=0
             )
-            logger.info(f"DHCP: XID={packet.xid}, IP Collision/Validation Failed, sending NACK")
+            logger.warning(f"DHCP: XID={packet.xid}, IP Collision/Validation Failed, sending NACK")
             self._send_packet(nack_packet)
 
     def _send_packet(self, packet: DHCPPacket):
@@ -113,6 +113,7 @@ class DHCPServer:
         target = (LOOPBACK_IP, self.client_port)
         try:
             self.socket.sendto(packet.to_bytes(), target)
+            logger.info(f"DHCP: Dispatched {packet.message_type} response to Client MAC {packet.client_mac} at {target}")
         except Exception as e:
             logger.error(f"Failed to send {packet.message_type} to {target}: {e}")
 

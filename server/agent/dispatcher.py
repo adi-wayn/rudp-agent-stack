@@ -81,6 +81,7 @@ class Dispatcher:
             client_address: (ip, port) tuple from transport layer.
         Returns: Encoded App Envelope (Header + Payload)
         """
+        logger.info(f"Dispatcher: Routing Opcode {hex(header.opcode)} for ReqID {header.request_id}")
         handler = self.handlers.get(header.opcode)
         
         if not handler:

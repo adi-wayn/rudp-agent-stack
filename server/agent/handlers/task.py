@@ -93,6 +93,8 @@ def handle_task(
     # 5. Execute Phase
     result = tool_dispatcher.execute_plan(plan)
     
+    logger.info(f"Task Execution Completed: PlanID={plan.plan_id}, Client={context['client_id']}, ReqID={header.request_id}")
+    
     # 6. Cache & Return
     # Build the final response bytes immediately
     response_bytes = ResponseBuilder.build_response(

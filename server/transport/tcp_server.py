@@ -80,6 +80,7 @@ class TCPServerTransport:
         conn = self.active_conns[client_addr]
         try:
             self.send_bytes(conn, data)
+            logger.info(f"TCP [{client_addr}] Sent {len(data)} bytes (ReqID={request_id})")
         except Exception as e:
             logger.error(f"Failed to send TCP response to {client_addr}: {e}")
 

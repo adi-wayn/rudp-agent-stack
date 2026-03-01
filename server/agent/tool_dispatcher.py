@@ -89,6 +89,7 @@ class ToolDispatcher:
         if "plan_artifact_path" in context:
              result["plan_artifact_path"] = context["plan_artifact_path"]
 
+        logger.info(f"Tool Dispatcher Execution Completed. Policy={plan.output_policy.value}. Final Output Bytes={len(str(final_output).encode('utf-8')) if final_output else 0}")
         return result
 
     def _execute_step(self, step: Step, context: Dict[str, Any]):
