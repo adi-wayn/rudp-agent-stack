@@ -6,7 +6,7 @@ from common.constants import DHCP_SERVER_PORT, DHCP_CLIENT_PORT, LOOPBACK_IP
 from common.dhcp_packet import DHCPPacket
 from server.dhcp.ip_manager import IPManager
 
-logger = logging.getLogger("DHCPServer")
+logger = logging.getLogger("DHCP-UDP")
 
 class DHCPServer:
     """

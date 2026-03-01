@@ -14,9 +14,9 @@ from server.dns_server import DoHRUDPServer
 # Mirrors client/__main__.py style
 logging.basicConfig(
     level=logging.INFO,
-    format="[Server] %(asctime)s - %(levelname)s - %(message)s"
+    format='[%(asctime)s] [%(name)s] %(message)s'
 )
-logger = logging.getLogger("ServerMain")
+logger = logging.getLogger("Orchestrator")
 
 def start_dhcp_server():
     """Helper function to start the DHCP Server in a separate thread."""

@@ -6,7 +6,7 @@ from common.http_packet import HTTPBuilder
 from server.transport.rudp_server import RUDPServerTransport
 from server.dns.dns_cache import DNSCache
 
-logger = logging.getLogger("DNSServer")
+logger = logging.getLogger("DoH-RUDP")
 
 class DoHRUDPServer:
     """

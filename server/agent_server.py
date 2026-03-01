@@ -28,6 +28,10 @@ class AgentServer:
         # Day 3 Refactor: Agent owns transport (Client pattern)
         self.transport = transport or TCPServerTransport()
         
+        global logger
+        is_async = getattr(self.transport, 'is_async', not hasattr(self.transport, 'accept')) is True
+        logger = logging.getLogger("Agent-RUDP" if is_async else "Agent-TCP")
+        
         # 1. Initialize Components
         self.policy_guard = PolicyGuard(sandbox_root)
         self.idempotency_cache = IdempotencyCache()

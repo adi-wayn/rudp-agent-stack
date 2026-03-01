@@ -12,8 +12,8 @@ from common.rudp_sender import RUDPSender
 from common.rudp_receiver import RUDPReceiver
 from common.constants import AGENT_SERVER_PORT, LOOPBACK_IP, MAX_RWND
 
-logging.basicConfig(level=logging.INFO, format='[%(asctime)s] [RUDP-Server] %(message)s')
-logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO, format='[%(asctime)s] [%(name)s] %(message)s')
+logger = logging.getLogger("RUDP")
 
 class RUDPConnection:
     """

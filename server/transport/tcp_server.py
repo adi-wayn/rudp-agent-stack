@@ -15,8 +15,8 @@ from common.app_envelope import decode_header, encode_message, HEADER_SIZE
 from common.constants import AGENT_SERVER_PORT, MAX_PAYLOAD_LEN, LOOPBACK_IP
 
 # Configure Logging
-logging.basicConfig(level=logging.INFO, format='[%(asctime)s] [TCP-Server] %(message)s')
-logger = logging.getLogger(__name__)
+logging.basicConfig(level=logging.INFO, format='[%(asctime)s] [%(name)s] %(message)s')
+logger = logging.getLogger("TCP")
 
 # Day 1 Opcode Placeholders (Local definition to avoid modifying common/constants.py)
 OP_PING = 0xFF
